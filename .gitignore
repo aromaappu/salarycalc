@@ -1,9 +1,14 @@
 # Gradle files
 .gradle/
 build/
+/app/build
+/app/release
+/app/autosms/release
+/app/standard/release
 
 # Local configuration file (sdk path, etc)
 local.properties
+/keystore.properties
 
 # Log/OS Files
 *.log
@@ -32,3 +37,7 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Personal data
+canara bank statement.pdf
+.DS_Store

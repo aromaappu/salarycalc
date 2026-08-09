@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- =============================================================
+         AUTO SMS FLAVOR ONLY
+         This flavor previously declared SMS permissions plus an SMS
+         receiver/service. The app now tracks bank/UPI payment messages
+         through Notification Access (SmsNotificationListener in the main
+         manifest) instead, so NO SMS permission is declared anywhere in
+         the project. That removes the Google Play Protect install warning
+         while keeping automatic transaction detection.
+         ============================================================= -->
+
+</manifest>
