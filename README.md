@@ -81,8 +81,43 @@ SalaryCalc is an Android personal finance application designed to help users man
 * **Database:** Room Database
 * **Platform:** Android
 * **Build System:** Gradle
-* **Architecture:** Android application architecture
 * **Version Control:** Git & GitHub
+
+## 📱 Screenshots
+
+Add your application screenshots inside the `screenshots` folder in this repository.
+
+Example:
+
+```text
+screenshots/
+├── dashboard.png
+├── transactions.png
+├── loans.png
+└── fd-tracker.png
+```
+
+### Dashboard
+
+![SalaryCalc Dashboard](screenshots/dashboard.png)
+
+### Transactions
+
+![Transactions](screenshots/transactions.png)
+
+### Loan Tracker
+
+![Loan Tracker](screenshots/loans.png)
+
+### FD Tracker
+
+![FD Tracker](screenshots/fd-tracker.png)
+
+## 📥 Download
+
+**Available on Indus Appstore**
+
+[Download SalaryCalc from Indus Appstore](https://indusapp.store/hnu7fmve?utm_source=chatgpt.com)
 
 ## ⚙️ How It Works
 
