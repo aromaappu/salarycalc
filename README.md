@@ -2,6 +2,14 @@
 
 SalaryCalc is an Android personal finance application designed to help users manage **income, expenses, bank transactions, loans, fixed deposits, and financial records** in one place.
 
+## 📸 Screenshots
+
+<p align="center">
+  <img src="screenshots/dashboard.jpg" width="250" alt="Dashboard"/>
+  <img src="screenshots/income.jpg" width="250" alt="Income"/>
+  <img src="screenshots/expense.jpg" width="250" alt="Expense"/>
+</p>
+
 ## ✨ Features
 
 ### 💰 Income & Expense Management
