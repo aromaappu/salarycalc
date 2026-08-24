@@ -1,15 +1,98 @@
-# 💰 SalaryCalc – Income & Expense Tracker
+<div align="center">
 
-SalaryCalc is an Android personal finance application designed to help users manage **income, expenses, bank transactions, loans, fixed deposits, and financial records** in one place.
+# 💰 SalaryCalc
+
+**Android personal finance app — income, expenses, bank statement imports, loans, and FD tracking in one place**
+
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.0-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](https://kotlinlang.org/)
+[![Jetpack Compose](https://img.shields.io/badge/Jetpack_Compose-UI-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white)](https://developer.android.com/compose)
+[![Room DB](https://img.shields.io/badge/Room-Local_DB-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://developer.android.com/training/data-storage/room)
+[![Android](https://img.shields.io/badge/API_26+-Android_8.0-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://developer.android.com/)
+
+*Income & Expense · Bank Statement Import · Loan & FD Tracker · CSV/PDF Export · Dark Mode*
+
+</div>
+
+---
+
+## 📖 About The Project
+
+SalaryCalc is a full-featured Android personal finance application. Users record
+income and expenses manually or **automatically import them from bank PDF/CSV statements**
+using a multi-bank parser engine (with OCR fallback for scanned statements). It also
+tracks loans, fixed deposits, and generates exportable reports.
+
+---
+
+## ✨ Features
+
+| Module | What it does |
+|---|---|
+| 💰 **Income & Expense** | Add, edit, categorize transactions with notes and receipt attachments |
+| 🏦 **Bank Import** | Upload PDF/CSV statements — auto-detected Canara, HDFC, SBI, generic formats; OCR fallback for scanned PDFs; duplicate detection |
+| 💳 **Loan Tracker** | Add loans, track repayments, monitor outstanding balances |
+| 📈 **FD Tracker** | Track fixed deposits, maturity dates, growth calculations |
+| 📊 **Dashboard** | Income vs expense summaries, category-wise charts, 14-day trends |
+| 📤 **Export** | CSV and PDF export of transactions |
+| ☁️ **Drive Backup** | Google Drive backup & restore |
+| 🔒 **Security** | App lock, local-first data |
+| 🎨 **UX** | Dark mode, Material Design 3, offline-ready |
+
+---
+
+## 🏗️ Architecture
+
+```
+app/                          Android client
+├── ui/screens/               Compose screens (Dashboard, Income, Expense, Bank Import…)
+├── bankimport/               Multi-bank PDF/CSV parser engine
+│   ├── CanaraParser.kt       Bank-specific parsers
+│   ├── PdfReader.kt          PDF text extraction
+│   ├── OcrHelper.kt          OCR fallback for scanned statements
+│   ├── CsvGenerator.kt       CSV output
+│   └── TransactionValidator.kt + DuplicateChecker.kt
+└── db/                       Room database + DAOs
+
+bank-import-service/           Node.js microservice (server-side PDF → transaction API)
+├── services/                 Parser, OCR, CSV generator, DB import
+├── tests/                    Jest test suite for parsers
+└── public/                   Web upload UI
+
+screenshots/                  App screenshots for README
+```
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Language | Kotlin |
+| UI | Jetpack Compose, Material 3 |
+| Database | Room (SQLite) |
+| Bank Parsing | Android PDF text extraction + ML Kit OCR + custom parsers |
+| Backup | Google Drive API |
+| Server-side (optional) | Node.js, Express, Tesseract OCR, Jest tests |
+| Dark Mode | System-aware theming |
+
+---
+
+## 🚀 Getting Started
+
+1. Open in **Android Studio**, let Gradle sync
+2. Run on device or emulator (min SDK 26)
+
+---
 
 ## 📸 Screenshots
 
 <p align="center">
-  <img src="screenshots/dashboard.jpg" width="250" alt="Dashboard"/>
-  <img src="screenshots/income.jpg" width="250" alt="Income"/>
-  <img src="screenshots/expense.jpg" width="250" alt="Expense"/>
+  <img src="screenshots/dashboard.jpg" width="240" alt="Dashboard"/>
+  <img src="screenshots/income.jpg" width="240" alt="Income"/>
+  <img src="screenshots/expense.jpg" width="240" alt="Expense"/>
 </p>
 
+<<<<<<< HEAD
 ## ✨ Features
 
 ### 💰 Income & Expense Management
@@ -133,6 +216,16 @@ SalaryCalc is continuously being improved with new automation, financial trackin
 * GitHub: https://github.com/aromaappu
 * Instagram: https://www.instagram.com/_ar.xmal_/
 
+=======
+>>>>>>> d635af8 (Add README: Kotlin personal finance app with bank statement import)
 ---
 
-⭐ **If you find SalaryCalc useful, consider giving the repository a star!**
+## 👤 Author
+
+**Appu Aromal** — [GitHub](https://github.com/aromaappu)
+
+---
+
+<div align="center">
+<sub>Kotlin · Compose · Room · OCR · Multi-bank Parser</sub>
+</div>
