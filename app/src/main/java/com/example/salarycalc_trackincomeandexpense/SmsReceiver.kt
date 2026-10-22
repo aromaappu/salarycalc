@@ -4,6 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import org.json.JSONArray
+import org.json.JSONObject
 import com.example.salarycalc_trackincomeandexpense.data.AppDatabase
 import java.text.SimpleDateFormat
 import java.util.*
@@ -12,12 +14,11 @@ import java.util.regex.Pattern
 class SmsReceiver : BroadcastReceiver() {
 
     companion object {
-        private const val TAG = "SmsReceiver"
         private const val PREFS_NAME = "SmsTrackingPrefs"
-        private const val KEY_SMS_ENABLED = "smsTrackingEnabled"
         private const val KEY_CONFIRMATION_ENABLED = "smsConfirmationEnabled"
         private const val KEY_PENDING_TRANSACTIONS = "pendingTransactions"
-        private const val KEY_PROCESSED_SMS_HASHES = "processedSmsHashes"
+        private const val KEY_RECENT_PAYMENTS = "recentNotificationPaymentsV2"
+        private val transactionLock = Any()
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -25,494 +26,27 @@ class SmsReceiver : BroadcastReceiver() {
         // notifications via SmsNotificationListener, so there is nothing to do.
     }
 
-    private fun generateSmsHash(message: String, timestamp: Long): String {
-        val normalized = message.lowercase().replace("\\s".toRegex(), "")
-        val timeWindow = (timestamp / 60000) // Group by minute
-        return "${normalized}_${timeWindow}".hashCode().toString()
-    }
-
-    private fun isDuplicate(prefs: SharedPreferences, hash: String): Boolean {
-        val processedHashes = prefs.getStringSet(KEY_PROCESSED_SMS_HASHES, mutableSetOf()) ?: mutableSetOf()
-        return processedHashes.contains(hash)
-    }
-
-    private fun markAsProcessed(prefs: SharedPreferences, hash: String) {
-        val processedHashes = prefs.getStringSet(KEY_PROCESSED_SMS_HASHES, mutableSetOf()) ?: mutableSetOf()
-        val updatedHashes = processedHashes.toMutableSet()
-        updatedHashes.add(hash)
-
-        // Keep only last 1000 hashes to avoid storage bloat
-        if (updatedHashes.size > 1000) {
-            val iterator = updatedHashes.iterator()
-            repeat(updatedHashes.size - 1000) { iterator.next(); iterator.remove() }
-        }
-
-        prefs.edit().putStringSet(KEY_PROCESSED_SMS_HASHES, updatedHashes).apply()
-    }
-
-    private fun parseTransaction(message: String, sender: String?): TransactionData? {
-        val lowerMessage = message.lowercase()
-        
-        // Check if it's a transaction SMS
-        if (!isTransactionSms(lowerMessage)) return null
-        
-        // Extract all transaction details
-        val amount = extractAmount(message)
-        if (amount == null) return null
-        
-        val transactionType = determineTransactionType(lowerMessage)
-        val merchant = extractMerchantName(message, sender)
-        val bank = extractBankName(sender)
-        val accountLast4 = extractAccountLast4(message)
-        val balance = extractBalance(message)
-        val referenceNumber = extractReferenceNumber(message)
-        val paymentMethod = extractPaymentMethod(lowerMessage)
-        val category = classifyCategory(lowerMessage, merchant, transactionType)
-        val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        val description = message.take(200)
-        val confidence = calculateConfidence(amount, merchant, category, paymentMethod)
-        
+    private fun parseTransaction(
+        message: String,
+        sender: String?,
+        timestamp: Long = System.currentTimeMillis(),
+        trustedPaymentApp: Boolean = false,
+        title: String = ""
+    ): TransactionData? {
+        val parsed = PaymentNotificationParser.parse(message, trustedPaymentApp, title) ?: return null
+        val lowerMessage = message.lowercase(Locale.ROOT)
+        val paymentMethod = if (trustedPaymentApp) "UPI" else extractPaymentMethod(lowerMessage)
+        val category = classifyCategory(lowerMessage, parsed.name, parsed.type)
+        val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(timestamp))
+        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
         return TransactionData(
-            isTransaction = true,
-            transactionType = transactionType,
-            amount = amount,
-            currency = "INR",
-            merchant = merchant,
-            bank = bank,
-            accountLast4 = accountLast4,
-            balance = balance,
-            referenceNumber = referenceNumber,
-            paymentMethod = paymentMethod,
-            category = category,
-            date = date,
-            time = time,
-            description = description,
-            confidence = confidence
+            isTransaction = true, transactionType = parsed.type, amount = parsed.amount,
+            currency = "INR", merchant = parsed.name, bank = extractBankName(sender),
+            accountLast4 = parsed.accountLast4, balance = extractBalance(message),
+            referenceNumber = parsed.reference, paymentMethod = paymentMethod,
+            category = category, date = date, time = time, description = message.take(200),
+            confidence = calculateConfidence(parsed.amount, parsed.name, category, paymentMethod)
         )
-    }
-
-    private fun isTransactionSms(message: String): Boolean {
-        // Ignore OTP and promotional messages
-        val ignoreKeywords = listOf(
-            "otp", "one time password", "verification", "code", "login", "authenticate",
-            "offer", "deal", "discount", "sale", "promo", "cashback", "reward",
-            "delivery", "shipped", "order", "package", "courier",
-            "loan", "emi", "interest rate", "apply now", "approved",
-            "loyalty", "credit point", "credit points", "credit score",
-            "reward point", "reward points", "loyalty point", "loyalty points",
-            "points earned", "points redeemed", "redeem", "loyalty credit",
-            "free", "win", "prize", "lottery", "jackpot", "congratulations",
-            "claim", "bonus", "earn now", "make money", "click here",
-            "unsubscribe", "stop sms", "dnd", "do not disturb"
-        )
-        
-        if (ignoreKeywords.any { message.contains(it) }) return false
-        
-        // Must have at least one transaction keyword
-        val transactionKeywords = listOf(
-            "credited", "debited", "received", "sent", "paid", "purchase",
-            "spent", "withdrawn", "deposit", "deducted", "transferred"
-        )
-        val hasTransactionKeyword = transactionKeywords.any { message.contains(it) }
-        if (!hasTransactionKeyword) return false
-        
-        // And at least one bank/financial keyword to reject casual messages like "received 100rs"
-        val bankKeywords = listOf(
-            "account", "a/c", "bank", "upi", "neft", "imps", "rtgs",
-            "balance", "avl", "available", "txn", "transaction", "ref",
-            "utr", "atm", "card",             "wallet", "credited", "debited",
-            "phonepe", "phone pe", "gpay", "google pay", "paytm",
-            "bhim", "mobikwik", "freecharge", "amazon pay", "whatsapp pay",
-            "slice", "jupiter", "fi money", "fi bank", "cRED",
-            "payzapp", "olamoney", "mobiwallet", "wallet",
-            "upi", "upi ref", "upi txn", "upi transaction",
-            "npci", "bharatpe", "pawrh", "paysense",
-            "sbi pay", "bob world", "pn b pay", "icici pay",
-            "axis pay", "kotak pay", "idbi pay", "induspay"
-        )
-        return bankKeywords.any { message.contains(it) }
-    }
-
-    private fun extractAmount(message: String): Double? {
-        // More specific patterns to avoid picking random numbers
-        val patterns = listOf(
-            // Match Rs./₹ followed by amount (most specific)
-            Pattern.compile("Rs\\.?\\s*(\\d{1,3}(?:,\\d{3})*(?:\\.\\d{1,2})?)", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("₹\\s*(\\d{1,3}(?:,\\d{3})*(?:\\.\\d{1,2})?)"),
-            // Match INR followed by amount
-            Pattern.compile("INR\\s*(\\d{1,3}(?:,\\d{3})*(?:\\.\\d{1,2})?)", Pattern.CASE_INSENSITIVE),
-            // Match "amount/sum/total of Rs./₹ X"
-            Pattern.compile("(?:amount|sum|total)\\s*(?:of|:)?\\s*(?:Rs\\.?|₹)?\\s*(\\d{1,3}(?:,\\d{3})*(?:\\.\\d{1,2})?)", Pattern.CASE_INSENSITIVE),
-            // Match "debited/credited Rs./₹ X"
-            Pattern.compile("(?:debited|credited|paid|received|sent|transferred)\\s*(?:by|to|from)?\\s*(?:Rs\\.?|₹)?\\s*(\\d{1,3}(?:,\\d{3})*(?:\\.\\d{1,2})?)", Pattern.CASE_INSENSITIVE),
-            // Match UPI specific: "sent Rs.500" or "received Rs.500"
-            Pattern.compile("(?:sent|received)\\s+(?:Rs\\.?|₹|INR)?\\s*(\\d{1,3}(?:,\\d{3})*(?:\\.\\d{1,2})?)", Pattern.CASE_INSENSITIVE)
-        )
-        
-        for (pattern in patterns) {
-            val matcher = pattern.matcher(message)
-            if (matcher.find()) {
-                val amountStr = matcher.group(1)?.replace(",", "")
-                val amount = amountStr?.toDoubleOrNull()
-                // Only return if amount is reasonable (between 1 and 10,00,000)
-                if (amount != null && amount > 0 && amount < 1000000) {
-                    return amount
-                }
-            }
-        }
-        return null
-    }
-
-    private fun determineTransactionType(message: String): String {
-        return if (TransactionTypeClassifier.classify(message) == "CREDIT") "credit" else "debit"
-    }
-
-    private fun extractMerchantName(message: String, sender: String?): String {
-        val lowerMessage = message.lowercase()
-
-        // Salary detection
-        val salaryKeywords = listOf("salary", "payroll", "wages", "monthly pay")
-        val isCredit = !listOf("debited", "sent", "paid", "purchase", "spent", "withdrawn", "deducted").any { lowerMessage.contains(it) }
-        if (isCredit && salaryKeywords.any { lowerMessage.contains(it) }) {
-            val companyPattern = Pattern.compile("from\\s+([A-Z][A-Za-z\\s]+?)(?:\\s+via|\\s+on|\\s+credited|\\.|$)", Pattern.CASE_INSENSITIVE)
-            val matcher = companyPattern.matcher(message)
-            if (matcher.find()) {
-                val companyName = matcher.group(1)?.trim()
-                if (companyName != null && companyName.length > 2 && companyName.length < 50) return companyName
-            }
-            return "Salary"
-        }
-
-        // ===== STEP 1: Extract actual shop/merchant name from SMS =====
-        // This catches ALL local shops: "Ravi General Store", "Sharma Medical", "Krishna Tea Stall" etc.
-        val extracted = extractShopName(message)
-        if (extracted.isNotEmpty()) return extracted
-
-        // ===== STEP 2: UPI / App merchant extraction =====
-        val upiExtracted = extractUpiMerchant(message)
-        if (upiExtracted.isNotEmpty()) return upiExtracted
-
-        // ===== STEP 3: Keyword-based generic fallback =====
-        val keywordMatch = matchKeywordMerchant(lowerMessage)
-        if (keywordMatch.isNotEmpty()) return keywordMatch
-
-        // ===== STEP 4: Extract "at/to/from/for" patterns =====
-        val atExtracted = extractAtPattern(message)
-        if (atExtracted.isNotEmpty()) return atExtracted
-
-        // ===== STEP 5: Person name (P2P transfers) =====
-        val personName = extractPersonName(message)
-        if (personName.isNotEmpty()) return personName
-
-        // ===== STEP 6: Sender code mapping =====
-        if (sender != null) {
-            val senderMerchant = extractMerchantFromSender(sender)
-            if (senderMerchant.isNotEmpty()) return senderMerchant
-        }
-
-        // ===== FINAL FALLBACK =====
-        return when {
-            lowerMessage.contains("salary") -> "Salary"
-            lowerMessage.contains("upi") -> "UPI Transfer"
-            lowerMessage.contains("atm") -> "ATM Withdrawal"
-            lowerMessage.contains("wallet") -> "Wallet"
-            lowerMessage.contains("bank") || lowerMessage.contains("account") -> "Bank Transfer"
-            else -> "Unknown"
-        }
-    }
-
-    // ===== Short merchant: "Krishna Tea Stall" → "Tea", "Ravi General Store" → "General" =====
-    private fun extractShopName(message: String): String {
-        // Short display names mapped from longer suffixes
-        val shortNames = mapOf(
-            "general store" to "General", "general shop" to "General",
-            "grocery store" to "Grocery", "kirana store" to "Grocery", "kirana shop" to "Grocery",
-            "medical store" to "Medical", "medical shop" to "Medical",
-            "tea stall" to "Tea", "tea shop" to "Tea", "chai stall" to "Tea", "chai shop" to "Tea",
-            "tea point" to "Tea", "chai point" to "Tea",
-            "coffee shop" to "Coffee", "coffee house" to "Coffee", "cafe" to "Cafe",
-            "sweet shop" to "Sweets", "sweet house" to "Sweets", "sweet corner" to "Sweets",
-            "cake shop" to "Bakery", "bakery" to "Bakery", "bakers" to "Bakery",
-            "food corner" to "Food", "food court" to "Food", "food point" to "Food", "food house" to "Food",
-            "restaurant" to "Restaurant", "dhaba" to "Dhaba", "hotel" to "Hotel",
-            "mess" to "Mess", "canteen" to "Canteen",
-            "tiffin center" to "Tiffin", "tiffin service" to "Tiffin",
-            "juice center" to "Juice", "juice point" to "Juice", "juice shop" to "Juice",
-            "ice cream parlour" to "Ice Cream", "ice cream" to "Ice Cream",
-            "fruit shop" to "Fruit", "fruit vendor" to "Fruit",
-            "vegetable shop" to "Vegetable", "veg shop" to "Vegetable",
-            "pan shop" to "Pan", "paan shop" to "Pan", "pan corner" to "Pan",
-            "stationery shop" to "Stationery", "printing press" to "Printing",
-            "photo copy" to "Xerox", "hardware store" to "Hardware", "hardware shop" to "Hardware",
-            "paint shop" to "Paint", "cloth shop" to "Cloth", "cloth store" to "Cloth",
-            "readymade" to "Cloth", "shoe shop" to "Footwear", "shoe store" to "Footwear",
-            "gold shop" to "Gold", "silver shop" to "Silver",
-            "gift shop" to "Gift", "gift house" to "Gift",
-            "fancy store" to "Fancy", "fancy shop" to "Fancy",
-            "toy shop" to "Toys", "toy store" to "Toys",
-            "pet shop" to "Pet", "fish shop" to "Fish",
-            "flower shop" to "Flower", "glass shop" to "Glass", "glass house" to "Glass",
-            "tyre shop" to "Tyre", "tyre store" to "Tyre", "puncture shop" to "Puncture",
-            "water purifier" to "Water", "water filter" to "Water", "ro service" to "Water",
-            "mobile shop" to "Mobile", "mobile store" to "Mobile", "mobile repair" to "Mobile",
-            "phone shop" to "Mobile", "computer shop" to "Computer", "laptop shop" to "Computer",
-            "computer repair" to "Computer", "internet cafe" to "Internet", "cyber cafe" to "Internet",
-            "typing center" to "Typing", "photo studio" to "Studio", "video studio" to "Studio",
-            "beauty parlour" to "Salon", "beauty salon" to "Salon", "hair salon" to "Salon",
-            "coaching center" to "Coaching",
-            "traders" to "Traders", "trading" to "Trading",
-            "enterprises" to "Enterprises", "enterprise" to "Enterprises",
-            "emporium" to "Emporium", "bhandar" to "Bhandar",
-            "bhawan" to "Bhawan", "nivas" to "Nivas", "palace" to "Palace",
-            "bazaar" to "Bazaar", "mandi" to "Mandi", "dukan" to "Dukan",
-            "mart" to "Mart", "hub" to "Hub", "agency" to "Agency",
-            "corporation" to "Corp", "company" to "Co",
-            "& co" to "Co", "and co" to "Co", "& sons" to "Sons", "and sons" to "Sons",
-            "brothers" to "Brothers",
-            "gym" to "Gym", "fitness" to "Fitness", "clinic" to "Clinic",
-            "mithai" to "Sweets", "sweets" to "Sweets"
-        )
-
-        // Build regex-safe suffix list (longest first)
-        val allSuffixes = shortNames.keys.toList().sortedByDescending { it.length }
-
-        // 1. After payment keywords: "paid to Ravi General Store via UPI"
-        val paymentPrefixes = listOf("paid to", "sent to", "payment to", "transferred to", "at", "to", "for", "from")
-        for (prefix in paymentPrefixes) {
-            for (suffix in allSuffixes) {
-                val pattern = Pattern.compile(
-                    "${Pattern.quote(prefix)}\\s+(?:[A-Za-z][A-Za-z0-9&'.]*\\s+)*${Pattern.quote(suffix)}(?:\\s+(?:via|upi|on|ref|txn|\\d)|\\s*\\.|\$)",
-                    Pattern.CASE_INSENSITIVE
-                )
-                val matcher = pattern.matcher(message)
-                if (matcher.find()) {
-                    val short = shortNames[suffix.lowercase()]
-                    if (short != null) return short
-                }
-            }
-        }
-
-        // 2. Standalone: "Ravi General Store UPI payment"
-        for (suffix in allSuffixes) {
-            val pattern = Pattern.compile(
-                "(?:[A-Za-z][A-Za-z0-9&'.]*\\s+)*${Pattern.quote(suffix)}(?:\\s+(?:via|upi|on|ref|txn|payment|of|rs|₹|\\d)|\\s*\\.|\$)",
-                Pattern.CASE_INSENSITIVE
-            )
-            val matcher = pattern.matcher(message)
-            if (matcher.find()) {
-                val short = shortNames[suffix.lowercase()]
-                if (short != null) return short
-            }
-        }
-
-        // 3. VPA handle: "XYZ@ybl"
-        val vpaPattern = Pattern.compile("([A-Za-z0-9._]+)@[a-z]+", Pattern.CASE_INSENSITIVE)
-        val vpaMatcher = vpaPattern.matcher(message)
-        if (vpaMatcher.find()) {
-            val vpa = vpaMatcher.group(1) ?: ""
-            if (vpa.length >= 3 && !listOf("paytm", "phonepe", "gpay", "google", "amazon", "bhim").any { vpa.lowercase().contains(it) }) {
-                return capitalizeMerchant(vpa.replace(".", " ").replace("_", " "))
-            }
-        }
-
-        return ""
-    }
-
-    private fun cleanMerchantName(raw: String): String {
-        var cleaned = raw.trim()
-        // Remove trailing noise words
-        cleaned = cleaned.replace(Regex("\\s*(via|upi|on|ref|txn|payment|of|for|rs\\.?|₹|\\d+).*$", RegexOption.IGNORE_CASE), "").trim()
-        // Remove leading noise
-        cleaned = cleaned.replace(Regex("^(paid|sent|transferred|payment|at|to|for|from|\\$)\\s+", RegexOption.IGNORE_CASE), "").trim()
-        // Remove special chars except &, ', .
-        cleaned = cleaned.replace(Regex("[^A-Za-z0-9\\s.&']"), "").trim()
-        return cleaned
-    }
-
-    private fun isCommonFalsePositive(name: String): Boolean {
-        val lower = name.lowercase()
-        val falsePositives = listOf("account", "balance", "available", "debit", "credit", "card", "bank", "upi", "the")
-        return falsePositives.any { lower == it } || lower.length < 3
-    }
-
-    // ===== UPI merchant extraction =====
-    private fun extractUpiMerchant(message: String): String {
-        val upiPatterns = listOf(
-            // "paid to Merchant Name via UPI"
-            Pattern.compile("(?:paid|sent|transferred)\\s+to\\s+([A-Za-z][A-Za-z0-9\\s.&']+?)(?:\\s+via|\\s+upi|\\s+on|\\s+ref|\\s+txn|\\.|$)", Pattern.CASE_INSENSITIVE),
-            // "to Merchant Name via Google Pay"
-            Pattern.compile("to\\s+([A-Za-z][A-Za-z0-9\\s.&']+?)(?:\\s+on\\s+upi|\\s+via|\\s+ref|\\.|$)", Pattern.CASE_INSENSITIVE),
-            // "UPI to Merchant Name"
-            Pattern.compile("upi\\s+to\\s+([A-Za-z][A-Za-z0-9\\s.&']+?)(?:\\s+ref|\\s+on|\\.|$)", Pattern.CASE_INSENSITIVE),
-            // "Merchant Name/UPI/ref"
-            Pattern.compile("([A-Za-z][A-Za-z0-9\\s]+?)/UPI/(?:[A-Z0-9]+)", Pattern.CASE_INSENSITIVE)
-        )
-
-        for (pattern in upiPatterns) {
-            val matcher = pattern.matcher(message)
-            if (matcher.find()) {
-                val merchant = matcher.group(1)?.trim() ?: continue
-                val cleaned = cleanMerchantName(merchant)
-                if (cleaned.length >= 2 && !isCommonFalsePositive(cleaned)) {
-                    return capitalizeMerchant(cleaned)
-                }
-            }
-        }
-
-        // Google Pay / PhonePe / Paytm specific
-        val appPatterns = listOf(
-            Pattern.compile("(?:google\\s*pay|gpay|phonepe|phone\\s*pay|paytm|bhim)\\s+(?:to|->)\\s+([A-Za-z][A-Za-z0-9\\s.&']+?)(?:\\s|$|\\.|ref)", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("([A-Za-z][A-Za-z0-9\\s.&']+?)\\s+via\\s+(?:google\\s*pay|gpay|phonepe|phone\\s*pay|paytm|bhim)", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("at\\s+([A-Za-z][A-Za-z0-9\\s.&']+?)\\s+via\\s+(?:upi|google|phonepe|paytm)", Pattern.CASE_INSENSITIVE)
-        )
-
-        for (pattern in appPatterns) {
-            val matcher = pattern.matcher(message)
-            if (matcher.find()) {
-                val merchant = matcher.group(1)?.trim() ?: continue
-                val cleaned = cleanMerchantName(merchant)
-                if (cleaned.length >= 2 && !isCommonFalsePositive(cleaned)) {
-                    return capitalizeMerchant(cleaned)
-                }
-            }
-        }
-
-        return ""
-    }
-
-    // ===== Keyword-based generic merchant matching =====
-    private fun matchKeywordMerchant(lowerMessage: String): String {
-        val merchantKeywordMap = mapOf(
-            "chai" to "Tea", "tea" to "Tea", "tapri" to "Tea",
-            "coffee" to "Coffee", "cafe" to "Cafe", "starbucks" to "Coffee",
-            "ccd" to "Coffee", "barista" to "Coffee",
-            "restaurant" to "Restaurant", "hotel" to "Hotel", "dhaba" to "Dhaba",
-            "food" to "Food", "zomato" to "Food", "swiggy" to "Food",
-            "pizza" to "Food", "biryani" to "Restaurant",
-            "juice" to "Juice", "ice cream" to "Ice Cream",
-            "grocery" to "Grocery", "kirana" to "Grocery", "supermarket" to "Grocery",
-            "bigbasket" to "Grocery", "blinkit" to "Grocery", "zepto" to "Grocery",
-            "dmart" to "Grocery", "reliance" to "Grocery", "more" to "Grocery",
-            "vegetable" to "Grocery", "fruit" to "Grocery",
-            "amazon" to "Shopping", "flipkart" to "Shopping", "myntra" to "Shopping",
-            "meesho" to "Shopping", "ajio" to "Shopping", "nykaa" to "Shopping",
-            "store" to "Store", "shop" to "Shop", "mall" to "Shopping", "market" to "Market",
-            "petrol" to "Fuel", "fuel" to "Fuel", "bpcl" to "Fuel",
-            "hpcl" to "Fuel", "iocl" to "Fuel", "shell" to "Fuel",
-            "gas" to "Fuel", "diesel" to "Fuel", "pump" to "Fuel",
-            "pharmacy" to "Medical", "medical" to "Medical", "medicine" to "Medical",
-            "hospital" to "Hospital", "doctor" to "Doctor", "clinic" to "Clinic",
-            "apollo" to "Medical", "medplus" to "Medical", "netmeds" to "Medical",
-            "1mg" to "Medical", "pharmeasy" to "Medical",
-            "movie" to "Movie", "cinema" to "Cinema", "theatre" to "Movie",
-            "netflix" to "Subscription", "hotstar" to "Subscription", "prime" to "Subscription",
-            "spotify" to "Subscription", "youtube" to "Subscription",
-            "electricity" to "Electricity", "water" to "Water Bill",
-            "mobile" to "Recharge", "recharge" to "Recharge",
-            "airtel" to "Recharge", "jio" to "Recharge", "vi" to "Recharge", "bsnl" to "Recharge",
-            "internet" to "Internet", "broadband" to "Internet", "wifi" to "Internet",
-            "gas bill" to "Gas Bill", "lpg" to "Gas Bill",
-            "education" to "Education", "school" to "Education", "college" to "Education",
-            "tuition" to "Education", "course" to "Education",
-            "uber" to "Travel", "ola" to "Travel", "rapido" to "Travel",
-            "irctc" to "Travel", "redbus" to "Travel", "makemytrip" to "Travel",
-            "flight" to "Travel", "train" to "Travel", "bus" to "Travel",
-            "taxi" to "Travel", "auto" to "Travel", "cab" to "Travel",
-            "atm" to "ATM", "withdraw" to "ATM",
-            "bank" to "Transfer", "neft" to "Transfer", "imps" to "Transfer", "rtgs" to "Transfer",
-            "insurance" to "Insurance", "premium" to "Insurance",
-            "tax" to "Tax", "gst" to "Tax",
-            "paytm" to "Wallet", "phonepe" to "UPI", "google pay" to "UPI",
-            "gpay" to "UPI", "bhim" to "UPI", "mobikwik" to "Wallet",
-            "emi" to "EMI", "loan" to "Loan",
-            "subscription" to "Subscription", "membership" to "Subscription"
-        )
-        for ((keyword, merchantName) in merchantKeywordMap) {
-            if (lowerMessage.contains(keyword)) {
-                return merchantName
-            }
-        }
-        return ""
-    }
-
-    // ===== Extract "at/to/from/for" patterns =====
-    private fun extractAtPattern(message: String): String {
-        val extractPatterns = listOf(
-            Pattern.compile("at\\s+([A-Za-z][A-Za-z0-9\\s.&']+?)(?:\\s+on|\\s+for|\\s+ref|\\s+txn|\\.|$)", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("to\\s+([A-Za-z][A-Za-z0-9\\s.&']+?)(?:\\s+on|\\s+via|\\s+ref|\\s+txn|\\.|$)", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("from\\s+([A-Za-z][A-Za-z0-9\\s.&']+?)(?:\\s+on|\\s+via|\\s+ref|\\s+txn|\\.|$)", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("for\\s+([A-Za-z][A-Za-z0-9\\s.&']+?)(?:\\s+on|\\s+via|\\s+ref|\\s+txn|\\.|$)", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("(?:paid|spent|purchase|payment)\\s+(?:at|to)\\s+([A-Za-z][A-Za-z0-9\\s.&']+?)(?:\\s|$|\\.|ref)", Pattern.CASE_INSENSITIVE)
-        )
-
-        val falsePositives = listOf("account", "balance", "available", "debit", "credit", "card", "bank", "the")
-        for (pattern in extractPatterns) {
-            val matcher = pattern.matcher(message)
-            if (matcher.find()) {
-                val merchantName = matcher.group(1)?.trim() ?: continue
-                if (merchantName.length in 2..60 && falsePositives.none { merchantName.lowercase().contains(it) }) {
-                    return capitalizeMerchant(merchantName)
-                }
-            }
-        }
-        return ""
-    }
-
-    // ===== Person name detection (P2P transfers) =====
-    private fun extractPersonName(message: String): String {
-        val personPatterns = listOf(
-            Pattern.compile("(?:from|received from|transfer from|sent by)\\s+([A-Z][a-z]+\\s+[A-Z][a-z]+)(?:\\s+via|\\s+on|\\s+ref|\\.|$)", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("to\\s+([A-Z][a-z]+\\s+[A-Z][a-z]+)(?:\\s+via|\\s+on|\\s+upi|\\.|$)", Pattern.CASE_INSENSITIVE)
-        )
-
-        for (pattern in personPatterns) {
-            val matcher = pattern.matcher(message)
-            if (matcher.find()) {
-                val name = matcher.group(1)?.trim() ?: continue
-                if (name.length in 4..50) {
-                    val words = name.split(" ")
-                    if (words.all { it.isNotEmpty() && it[0].isUpperCase() }) {
-                        return name
-                    }
-                }
-            }
-        }
-        return ""
-    }
-
-    private fun capitalizeMerchant(name: String): String {
-        val cleaned = name.replace(Regex("[^A-Za-z0-9\\s.&']"), "").trim()
-        if (cleaned.isEmpty()) return "Unknown"
-        // Don't capitalize if it looks like a code/all-caps abbreviation
-        if (cleaned.all { !it.isLetter() || it.isUpperCase() } && cleaned.length <= 5) return cleaned
-        return cleaned.split(" ").joinToString(" ") { word ->
-            if (word.length <= 2 && word.all { it.isUpperCase() }) word
-            else word.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
-        }
-    }
-
-    private fun extractMerchantFromSender(sender: String): String {
-        val lowerSender = sender.lowercase().replace("[^a-z0-9]".toRegex(), "")
-        // Map known sender codes to merchant names
-        val senderMerchantMap = mapOf(
-            "adpay" to "AD Pay", "payu" to "PayU", "razorpay" to "Razorpay",
-            "snapay" to "SnaPay", "snapayin" to "SnaPay",
-            "bfl" to "Bajaj Finserv", "bajaj" to "Bajaj Finserv",
-            "csb" to "CSB Bank", "federal" to "Federal Bank",
-            "idfc" to "IDFC First Bank", "indusind" to "IndusInd Bank",
-            "yesbank" to "Yes Bank", "kotak" to "Kotak Bank",
-            "bob" to "Bank of Baroda", "canara" to "Canara Bank",
-            "union" to "Union Bank", "central" to "Central Bank",
-            "uco" to "UCO Bank", "indian" to "Indian Bank",
-            "punjab" to "PNB", "state" to "SBI", "sbi" to "SBI",
-            "hdfc" to "HDFC Bank", "icici" to "ICICI Bank",
-            "axis" to "Axis Bank"
-        )
-        for ((key, name) in senderMerchantMap) {
-            if (lowerSender.contains(key)) return name
-        }
-        return ""
     }
 
     private fun extractBankName(sender: String?): String {
@@ -553,15 +87,6 @@ class SmsReceiver : BroadcastReceiver() {
         return sender.takeLast(15)
     }
 
-    private fun extractAccountLast4(message: String): String {
-        val pattern = Pattern.compile("(?:account|a/c|xx|\\*\\*\\*)\\*?(\\d{4})(?:\\D|$)", Pattern.CASE_INSENSITIVE)
-        val matcher = pattern.matcher(message)
-        if (matcher.find()) {
-            return matcher.group(1) ?: ""
-        }
-        return ""
-    }
-
     private fun extractBalance(message: String): String {
         val patterns = listOf(
             Pattern.compile("(?:available\\s+balance|balance|bal)\\s*(?:is|:)?\\s*(?:Rs\\.?|₹)?\\s*(\\d+(?:,\\d{3})*(?:\\.\\d{1,2})?)", Pattern.CASE_INSENSITIVE),
@@ -573,21 +98,6 @@ class SmsReceiver : BroadcastReceiver() {
             if (matcher.find()) {
                 val balanceStr = matcher.group(1)?.replace(",", "")
                 return balanceStr ?: ""
-            }
-        }
-        return ""
-    }
-
-    private fun extractReferenceNumber(message: String): String {
-        val patterns = listOf(
-            Pattern.compile("(?:ref|reference|txn|transaction|id)\\s*(?:no|number)?\\s*[:#]?\\s*([A-Z0-9]{8,})", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("(?:utr|upi\\s+ref)\\s*[:#]?\\s*([A-Z0-9]{8,})", Pattern.CASE_INSENSITIVE)
-        )
-        
-        for (pattern in patterns) {
-            val matcher = pattern.matcher(message)
-            if (matcher.find()) {
-                return matcher.group(1) ?: ""
             }
         }
         return ""
@@ -753,8 +263,6 @@ class SmsReceiver : BroadcastReceiver() {
         if (confirmationEnabled) {
             // Store as pending — confirmation popup will show in app
             val pending = getPendingTransactions(prefs).toMutableList()
-            // Skip if an identical transaction is already waiting
-            if (pending.any { isSameTransaction(it, transaction) }) return
             pending.add(transaction)
             prefs.edit()
                 .putString(KEY_PENDING_TRANSACTIONS, serializeTransactions(pending))
@@ -779,13 +287,6 @@ class SmsReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun isSameTransaction(a: TransactionData, b: TransactionData): Boolean {
-        return a.amount == b.amount &&
-            a.merchant == b.merchant &&
-            a.date == b.date &&
-            a.time == b.time
-    }
-
     private fun autoSaveTransaction(context: Context, transaction: TransactionData) {
         // Write straight into the database so the transaction is added
         // immediately (no app restart or broadcast listener needed).
@@ -795,15 +296,8 @@ class SmsReceiver : BroadcastReceiver() {
             SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(java.util.Date())
         }
         val db = AppDatabase(context)
-        // Skip if an identical transaction already exists — guards against the
-        // same notification being re-posted by the phone (e.g. re-delivered SMS).
-        val exists = db.getTransactions(type = txType).any {
-            it.amount == transaction.amount &&
-                it.name.equals(txName, ignoreCase = true) &&
-                it.date == date
-        }
-        if (exists) return
-
+        // Notification duplicates are checked before this write using reference IDs
+        // and timestamps. Repeated legitimate same-day payments must remain separate.
         if (txType == AppDatabase.TYPE_INCOME) {
             if (!db.getIncomeSources().contains(txName)) db.addIncomeSource(txName)
         } else {
@@ -877,17 +371,75 @@ class SmsReceiver : BroadcastReceiver() {
 
     // Public wrapper for SmsNotificationListener: parses, dedups, and handles a
     // transaction read from a notification. Returns true if it was handled.
-    fun processNotificationTransaction(context: Context, body: String, sender: String?, timestamp: Long): Boolean {
+    fun processNotificationTransaction(
+        context: Context,
+        body: String,
+        sender: String?,
+        timestamp: Long,
+        sourcePackage: String = "sms",
+        trustedPaymentApp: Boolean = false,
+        title: String = ""
+    ): Boolean = synchronized(transactionLock) {
+        if (!SmsNotificationListener.isTrackingEnabled(context)) return@synchronized false
+        val transaction = parseTransaction(body, sender, timestamp, trustedPaymentApp, title)
+            ?: return@synchronized false
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val smsHash = generateSmsHash(body, timestamp)
-        if (isDuplicate(prefs, smsHash)) return false
-        val transaction = parseTransaction(body, sender)
-        if (transaction != null) {
-            markAsProcessed(prefs, smsHash)
-            handleTransaction(context, prefs, transaction)
-            return true
+        val payment = PaymentNotificationParser.Payment(
+            transaction.amount, transaction.transactionType, transaction.merchant,
+            transaction.referenceNumber, transaction.accountLast4
+        )
+        val incoming = PaymentDuplicateMatcher.entry(payment, timestamp, sourcePackage, "$title $body")
+        val recent = readRecentPayments(prefs).toMutableList()
+        val match = recent.indexOfFirst { PaymentDuplicateMatcher.matches(it, incoming) }
+        if (match >= 0) {
+            val old = recent[match]
+            recent[match] = old.copy(
+                sources = old.sources + incoming.sources,
+                reference = old.reference.ifBlank { incoming.reference }
+            )
+            writeRecentPayments(prefs, recent)
+            return@synchronized false
         }
-        return false
+        // Only remember handled transactions; a failed database write can be retried.
+        handleTransaction(context, prefs, transaction)
+        recent.add(incoming)
+        writeRecentPayments(prefs, recent)
+        true
+    }
+
+    private fun readRecentPayments(prefs: SharedPreferences): List<PaymentDuplicateMatcher.Entry> {
+        return try {
+            val array = JSONArray(prefs.getString(KEY_RECENT_PAYMENTS, "[]"))
+            (0 until array.length()).map { index ->
+                val item = array.getJSONObject(index)
+                val sources = item.getJSONArray("sources")
+                PaymentDuplicateMatcher.Entry(
+                    item.getLong("amount"), item.getString("type"), item.getString("name"),
+                    item.optString("reference"), item.getLong("timestamp"),
+                    (0 until sources.length()).map { sources.getString(it) }.toSet(),
+                    item.getString("message")
+                )
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun writeRecentPayments(prefs: SharedPreferences, entries: List<PaymentDuplicateMatcher.Entry>) {
+        val oldest = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
+        val array = JSONArray()
+        entries.filter { it.timestamp >= oldest }.takeLast(1000).forEach { entry ->
+            array.put(JSONObject().apply {
+                put("amount", entry.amountPaise)
+                put("type", entry.type)
+                put("name", entry.name)
+                put("reference", entry.reference)
+                put("timestamp", entry.timestamp)
+                put("sources", JSONArray(entry.sources.toList()))
+                put("message", entry.message)
+            })
+        }
+        prefs.edit().putString(KEY_RECENT_PAYMENTS, array.toString()).apply()
     }
 
     // Public wrappers for SmsForegroundService
@@ -940,3 +492,4 @@ class SmsReceiver : BroadcastReceiver() {
         return transaction
     }
 }
+

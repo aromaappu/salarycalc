@@ -60,7 +60,6 @@ import com.example.salarycalc_trackincomeandexpense.ui.screens.NotesScreen
 import com.example.salarycalc_trackincomeandexpense.ui.screens.PinLockScreen
 import com.example.salarycalc_trackincomeandexpense.ui.screens.RemindersScreen
 import com.example.salarycalc_trackincomeandexpense.ui.screens.SettingsScreen
-import com.example.salarycalc_trackincomeandexpense.ui.screens.SmsImportDialog
 import com.example.salarycalc_trackincomeandexpense.ui.screens.StatementScreen
 import com.example.salarycalc_trackincomeandexpense.ui.util.formatCurrency
 import com.example.salarycalc_trackincomeandexpense.ui.util.getTodayStr
@@ -81,9 +80,7 @@ fun SalaryCalcApp(
     db: AppDatabase,
     settings: SettingsStore,
     darkMode: Boolean,
-    onDarkModeChange: (Boolean) -> Unit,
-    incomingSmsText: String? = null,
-    onSmsImportConsumed: () -> Unit = {}
+    onDarkModeChange: (Boolean) -> Unit
 ) {
     var currentTab by rememberSaveable { mutableIntStateOf(0) }
     var overlayStack: List<Overlay> by remember { mutableStateOf(listOf<Overlay>()) }
@@ -262,15 +259,6 @@ fun SalaryCalcApp(
         )
     }
 
-    if (incomingSmsText != null) {
-        SmsImportDialog(
-            db = db,
-            initialText = incomingSmsText,
-            onDismiss = { onSmsImportConsumed() },
-            onImported = { onSmsImportConsumed() }
-        )
-    }
-
     var paymentDialogLoanId by remember { mutableStateOf<Long?>(null) }
 
     pendingDueLoanId?.let { dueId ->
@@ -398,3 +386,4 @@ fun SectionPlaceholder(title: String) {    Box(Modifier.fillMaxSize(), contentAl
         )
     }
 }
+

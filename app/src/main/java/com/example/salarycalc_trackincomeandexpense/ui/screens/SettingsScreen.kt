@@ -448,6 +448,8 @@ fun SettingsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     db.purgeAll(context)
+                    context.getSharedPreferences("SmsTrackingPrefs", Context.MODE_PRIVATE)
+                        .edit().clear().commit()
                     settings.purge(context)
                     onDarkModeChange(false)
                     showResetFinal = false
@@ -750,3 +752,4 @@ private fun SettingsListRow(
         )
     }
 }
+
