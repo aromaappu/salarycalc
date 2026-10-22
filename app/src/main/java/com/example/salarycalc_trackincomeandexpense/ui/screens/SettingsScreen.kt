@@ -375,7 +375,7 @@ fun SettingsScreen(
                     Text("About", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "The Salary Calculator APK is a simple and useful mobile application designed to help users easily calculate their monthly and yearly salary. It provides quick results based on basic input details like basic pay, allowances, and deductions, making salary estimation fast and accurate.",
+                        "SalaryCalc is a personal finance tracker for recording income and expenses, viewing reports, managing reminders, and tracking loans and fixed deposits. Bank statement and notification imports are optional; verify imported entries for accuracy.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -383,7 +383,7 @@ fun SettingsScreen(
                     Text("Privacy Policy", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "This Salary Calculator App does not collect, store, or share any personal user data. All calculations are done locally on your device and no information is sent to any server. The app does not use cookies, tracking, or third-party analytics. Your privacy is fully protected while using this application.",
+                        "SalaryCalc stores your financial records, notes, settings and imported transaction details locally on your device. Optional auto tracking processes notifications from your default SMS app and supported payment apps after you agree and grant Android Notification Access. This processing happens on your device, including while the app is closed; notification content is not sent to a server by this feature. Turn off Auto Transactions to stop processing and revoke Notification Access in Android Settings to remove access. You can delete saved records or use the app's data reset option. Uninstalling removes app-private data; exported files must be deleted separately. Backup and export files contain financial data: keep them secure and share only with people or services you trust. Checking for updates connects to our version-check service, which receives normal connection information such as your IP address; it does not require your financial records.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

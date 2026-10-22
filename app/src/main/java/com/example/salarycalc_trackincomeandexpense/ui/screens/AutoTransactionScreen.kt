@@ -63,7 +63,8 @@ fun AutoTransactionScreen(
 
     var refreshKey by remember { mutableIntStateOf(0) }
     var showImportDialog by remember { mutableStateOf(false) }
-    var trackingEnabled by remember { mutableStateOf(prefs.getBoolean(KEY_SMS_ENABLED, false)) }
+    var showTrackingDisclosure by remember { mutableStateOf(false) }
+    var trackingEnabled by remember { mutableStateOf(SmsNotificationListener.isTrackingEnabled(context)) }
     var confirmationEnabled by remember { mutableStateOf(prefs.getBoolean(KEY_CONFIRMATION_ENABLED, false)) }
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
@@ -81,10 +82,13 @@ fun AutoTransactionScreen(
     }
 
     fun enableTracking() {
-        prefs.edit().putBoolean(KEY_SMS_ENABLED, true).apply()
+        prefs.edit()
+            .putBoolean(SmsNotificationListener.KEY_DISCLOSURE_ACCEPTED, true)
+            .putBoolean(KEY_SMS_ENABLED, true)
+            .apply()
         trackingEnabled = true
         refreshKey++
-        toast("✅ Auto tracking enabled — allow Notification Access if asked")
+        toast("Allow Notification Access in Settings to start auto tracking")
         if (!SmsNotificationListener.isAccessGranted(context)) {
             openNotificationAccess()
         }
@@ -100,7 +104,7 @@ fun AutoTransactionScreen(
         if (trackingEnabled) {
             disableTracking()
         } else {
-            enableTracking()
+            showTrackingDisclosure = true
         }
     }
 
@@ -143,14 +147,17 @@ fun AutoTransactionScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFF667EEA))
-                    .clickable { openNotificationAccess() }
+                    .clickable {
+                        if (trackingEnabled) openNotificationAccess()
+                        else showTrackingDisclosure = true
+                    }
                     .padding(vertical = 12.dp),
                 horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center
             ) {
                 Text("🔔 Allow Notification Access", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
             Text(
-                "Payment SMS are read from your notifications — no SMS permission is used, so this app installs without Play Protect warnings. One-time allow in Settings.",
+                "Optional: read payment notifications from your default SMS app, Google Pay, PhonePe, Paytm and BHIM to save transactions locally. Notification Access must be allowed in Settings. Turn off Auto Transactions here to stop processing; revoke Notification Access in Android Settings to remove access.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
@@ -230,6 +237,38 @@ fun AutoTransactionScreen(
                 }
             }
         }
+    }
+
+    if (showTrackingDisclosure) {
+        AlertDialog(
+            onDismissRequest = { showTrackingDisclosure = false },
+            title = { Text("Allow payment notification processing?") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text(
+                        "Android Notification Access can expose notifications from other apps. " +
+                            "SalaryCalc filters sources before reading text: only your default SMS app, " +
+                            "Google Pay, PhonePe, Paytm and BHIM are supported. Notifications from those " +
+                            "sources can include non-payment messages. Their text and sender are processed " +
+                            "on your device to detect payments, including while SalaryCalc is closed. " +
+                            "Detected amounts, dates and transaction details are stored locally; this " +
+                            "feature does not send notification content to a server.\n\n" +
+                            "This is optional. You can enter transactions or import an SMS manually instead. " +
+                            "Turn off Auto Transactions to stop processing, or revoke Notification Access " +
+                            "in Android Settings. Existing saved transactions remain until you delete them."
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showTrackingDisclosure = false
+                    enableTracking()
+                }) { Text("Agree and continue") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTrackingDisclosure = false }) { Text("Not now") }
+            }
+        )
     }
 
     // Non-dismissable confirmation modal: only Accept/Reject closes it. Shown
