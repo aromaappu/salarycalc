@@ -76,6 +76,7 @@ object PaymentNotificationParser {
     private fun cleanName(raw: String): String {
         val name = raw.replace(Regex("\\s+"), " ").trim(' ', ':', '-', ',', '"', '\'')
         if (name.length !in 2..80 || !name.any { it.isLetter() }) return ""
+        if (Regex("^[xX*]+[0-9]+$").matches(name)) return ""
         if (Regex("^(?:your|my|bank|a/c|account|acct|upi|rs\\.?|inr|₹|[xX*]+[0-9])\\b", RegexOption.IGNORE_CASE).containsMatchIn(name)) return ""
         if (Regex("\\b(?:credited|debited|received|paid|sent|balance|successfully)\\b", RegexOption.IGNORE_CASE).containsMatchIn(name)) return ""
         // Preserve an actual person's/shop's name rather than replacing it with a category.
