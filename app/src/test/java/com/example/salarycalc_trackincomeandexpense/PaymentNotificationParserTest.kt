@@ -60,6 +60,7 @@ class PaymentNotificationParserTest {
 
     @Test fun preserveShopNameAndAvoidBankAccountAsName() {
         assertEquals("Krishna Tea Stall", requireNotNull(parse("You paid ₹45 to Krishna Tea Stall via UPI", true)).name)
+        assertEquals("Payment sent", requireNotNull(parse("You paid ₹45 to XX1234", true)).name)
         assertEquals("Ravi General Store", requireNotNull(parse("You paid ₹100 to Ravi General Store on 22 Oct", true)).name)
         assertEquals("Payment received", requireNotNull(parse("Rs.45 credited to your account XX1234" )).name)
     }
