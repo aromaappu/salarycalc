@@ -79,6 +79,26 @@ class CsvReaderImportRegressionTest {
     }
 
     @Test
+    fun supportsSemicolonSeparatedStatementAndTwoDigitYears() {
+        val csv = "Date;Narration;Withdrawal;Deposit;Balance\n" +
+            "01/10/26;Shop;45.00;;955.00\n" +
+            "02/10/26;Refund;;20.00;975.00\n"
+        val parsed = read(csv)
+        assertEquals(2, parsed.transactions.size)
+        assertEquals("2026-10-01", parsed.transactions[0].date)
+        assertEquals("CREDIT", parsed.transactions[1].type)
+    }
+
+    @Test
+    fun readsUtf16BankExport() {
+        val csv = "Date,Description,Debit,Credit\n01-10-2026,Shop,45.00,\n"
+        val withBom = byteArrayOf(0xFF.toByte(), 0xFE.toByte()) +
+            csv.toByteArray(Charsets.UTF_16LE)
+        val parsed = CsvReader.readDetailed(withBom.inputStream())
+        assertEquals(1, parsed.transactions.size)
+    }
+
+    @Test
     fun repeatedRowsInSingleBatchAreDetected() {
         val tx = read("Date,Description,Debit,Credit\n01-10-2026,Shop,45.00,\n")
             .transactions.first()
