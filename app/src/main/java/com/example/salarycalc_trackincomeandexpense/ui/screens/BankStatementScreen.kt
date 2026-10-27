@@ -67,7 +67,8 @@ private sealed class ScreenState {
         val confidence: Float,
         val source: String,
         val fileName: String,
-        val closingBalance: Double = 0.0
+        val closingBalance: Double = 0.0,
+        val skippedRows: Int = 0
     ) : ScreenState()
 }
 
@@ -124,7 +125,7 @@ fun BankStatementScreen(
                     }
                     val saved = withContext(Dispatchers.IO) {
                         ImportRepository.save(result.transactions, db).also {
-                            db.addBankStatement(name, it, result.summary.closingBalance)
+                            if (it > 0) db.addBankStatement(name, it, result.summary.closingBalance)
                         }
                     }
                     statements = db.getBankStatements()
@@ -145,7 +146,8 @@ fun BankStatementScreen(
                         confidence = result.confidence,
                         source = result.source,
                         fileName = name,
-                        closingBalance = result.closingBalance
+                        closingBalance = result.closingBalance,
+                        skippedRows = result.skippedRows
                     )
                 }
 
@@ -174,7 +176,7 @@ fun BankStatementScreen(
                     screenState = ScreenState.Loading("Saving…")
                     val saved = withContext(Dispatchers.IO) {
                         ImportRepository.save(selected, db).also {
-                            db.addBankStatement(preview.fileName, it, preview.closingBalance)
+                            if (it > 0) db.addBankStatement(preview.fileName, it, preview.closingBalance)
                         }
                     }
                     statements = db.getBankStatements()
@@ -355,7 +357,10 @@ private fun PreviewScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                "AI confidence is below 90%. Review and uncheck any incorrect rows before importing.",
+                if (preview.skippedRows > 0)
+                    "${preview.skippedRows} statement rows could not be parsed. Verify the file before importing."
+                else
+                    "Review names, dates, debit/credit and amounts; uncheck incorrect rows.",
                 fontSize = 12.sp,
                 color = Color(0xFFF59E0B)
             )
