@@ -47,6 +47,8 @@ object PdfReader {
                 if (doc.numberOfPages == 0) {
                     return Result.Error("This PDF contains no pages.")
                 }
+                // Extraction state belongs to this file, never to earlier uploads.
+                val pageElements = mutableListOf<PdfTextElement>()
                 val stripper = object : PDFTextStripper() {
                     override fun writeString(text: String, textPositions: List<TextPosition>) {
                         if (textPositions.isEmpty()) return
@@ -57,7 +59,7 @@ object PdfReader {
                         val width = (last.xDirAdj + last.widthOfSpace) - x
                         val height = (textPositions.maxOfOrNull { it.heightDir } ?: 0f)
                         val page = currentPageNo
-                        elements.add(PdfTextElement(text.trim(), x, y, width, height, page))
+                        pageElements.add(PdfTextElement(text.trim(), x, y, width, height, page))
                         super.writeString(text, textPositions)
                     }
                 }.apply { sortByPosition = true }
@@ -74,7 +76,7 @@ object PdfReader {
                         Result.Success(ocrText, viaOcr = true)
                     }
                 } else {
-                    Result.Success(text, viaOcr = false)
+                    Result.Success(text, viaOcr = false, elements = pageElements.toList())
                 }
             } finally {
                 try { doc.close() } catch (_: Exception) {}
@@ -85,9 +87,4 @@ object PdfReader {
         }
     }
 
-    private val elements = mutableListOf<PdfTextElement>()
-
-    fun resetElements() {
-        elements.clear()
-    }
 }
