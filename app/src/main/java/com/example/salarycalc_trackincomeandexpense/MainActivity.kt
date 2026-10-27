@@ -82,7 +82,10 @@ class MainActivity : ComponentActivity() {
 
         LegacyLocalStorageMigrator.tryMigrate(this, db, settings)
 
-        AutoEntries.applyDue(db, settings)
+        NotificationHelper.createChannel(this)
+        AutoEntries.applyDue(db, settings, this)
+        com.example.salarycalc_trackincomeandexpense.data.LoanScheduler.reconcileAll(this, db)
+        DailyFinanceWorker.ensureScheduled(this)
 
         // Import any transactions queued while the app was closed (reminder
         // payments / SMS auto-save) so they actually reach the database.
