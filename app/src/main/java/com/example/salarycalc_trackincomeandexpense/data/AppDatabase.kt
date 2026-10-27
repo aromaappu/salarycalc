@@ -14,7 +14,7 @@ class AppDatabase(context: Context) :
 
     companion object {
         private const val DB_NAME = "salarycalc.db"
-        private const val DB_VERSION = 6
+        private const val DB_VERSION = 7
 
         const val TYPE_INCOME = "income"
         const val TYPE_EXPENSE = "expense"
@@ -40,10 +40,12 @@ class AppDatabase(context: Context) :
                 receipt_name TEXT,
                 receipt_path TEXT,
                 created_at INTEGER NOT NULL,
-                tx_hash TEXT
+                tx_hash TEXT,
+                statement_id INTEGER
             )"""
         )
         db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_hash ON transactions(tx_hash) WHERE tx_hash IS NOT NULL")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_tx_statement ON transactions(statement_id)")
         db.execSQL(
             """CREATE TABLE income_sources (
                 name TEXT PRIMARY KEY
@@ -75,7 +77,8 @@ class AppDatabase(context: Context) :
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 amount REAL NOT NULL,
-                date TEXT NOT NULL
+                date TEXT NOT NULL,
+                repeat_monthly INTEGER NOT NULL DEFAULT 0
             )"""
         )
         db.execSQL(
@@ -126,6 +129,11 @@ class AppDatabase(context: Context) :
         }
         if (oldVersion < 6) {
             createFdTables(db)
+        }
+        if (oldVersion < 7) {
+            db.execSQL("ALTER TABLE transactions ADD COLUMN statement_id INTEGER")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_tx_statement ON transactions(statement_id)")
+            db.execSQL("ALTER TABLE reminders ADD COLUMN repeat_monthly INTEGER NOT NULL DEFAULT 0")
         }
     }
 
@@ -249,13 +257,14 @@ class AppDatabase(context: Context) :
     }
 
     /** Insert with SHA-256 hash for bank-import dedup. Returns -1 on hash collision (duplicate). */
-    fun addTransactionWithHash(type: String, amount: Double, name: String, date: String, hash: String): Long {
+    fun addTransactionWithHash(type: String, amount: Double, name: String, date: String, hash: String, statementId: Long? = null): Long {
         val values = ContentValues().apply {
             put("type", type)
             put("amount", amount)
             put("name", name)
             put("date", date)
             put("tx_hash", hash)
+            if (statementId != null) put("statement_id", statementId)
             put("created_at", System.currentTimeMillis())
         }
         return writableDatabase.insertWithOnConflict("transactions", null, values, SQLiteDatabase.CONFLICT_IGNORE)
@@ -539,7 +548,8 @@ class AppDatabase(context: Context) :
                         id = it.getLong(it.getColumnIndexOrThrow("id")),
                         name = it.getString(it.getColumnIndexOrThrow("name")),
                         amount = it.getDouble(it.getColumnIndexOrThrow("amount")),
-                        date = it.getString(it.getColumnIndexOrThrow("date"))
+                        date = it.getString(it.getColumnIndexOrThrow("date")),
+                        repeatMonthly = it.getInt(it.getColumnIndexOrThrow("repeat_monthly")) != 0
                     )
                 )
             }
@@ -547,14 +557,17 @@ class AppDatabase(context: Context) :
         return list
     }
 
-    fun addReminder(name: String, amount: Double, date: String): Long {
+    fun addReminder(name: String, amount: Double, date: String, repeatMonthly: Boolean = false): Long {
         val values = ContentValues().apply {
             put("name", name)
             put("amount", amount)
             put("date", date)
+            put("repeat_monthly", if (repeatMonthly) 1 else 0)
         }
         return writableDatabase.insert("reminders", null, values)
     }
+
+    fun getReminder(id: Long): Reminder? = getReminders().firstOrNull { it.id == id }
 
     fun deleteReminder(id: Long) {
         writableDatabase.delete("reminders", "id = ?", arrayOf(id.toString()))
@@ -627,8 +640,35 @@ class AppDatabase(context: Context) :
         }
     }
 
+    /** Transaction counts include only rows reliably linked to this statement. */
+    fun getLinkedStatementTransactionCount(id: Long): Int =
+        readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM transactions WHERE statement_id = ?",
+            arrayOf(id.toString())
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+
+    /** Never guess which older, unlinked transactions belonged to this file. */
+    fun deleteBankStatementAndLinkedTransactions(id: Long): Int {
+        val database = writableDatabase
+        database.beginTransaction()
+        try {
+            val deleted = database.delete("transactions", "statement_id = ?", arrayOf(id.toString()))
+            database.delete("bank_statements", "id = ?", arrayOf(id.toString()))
+            database.setTransactionSuccessful()
+            return deleted
+        } finally {
+            database.endTransaction()
+        }
+    }
+
     fun deleteBankStatement(id: Long) {
         writableDatabase.delete("bank_statements", "id = ?", arrayOf(id.toString()))
+    }
+
+    fun updateBankStatementCount(id: Long, count: Int) {
+        writableDatabase.update("bank_statements", ContentValues().apply {
+            put("tx_count", count)
+        }, "id = ?", arrayOf(id.toString()))
     }
 
     fun getBankStatementByFile(fileName: String): BankStatementRecord? {
