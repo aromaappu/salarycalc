@@ -74,12 +74,16 @@ object ImportRepository {
         val file = copyToTemp(context, stream)
             ?: return ImportResult.Error("File is too large. Maximum size is 30 MB.")
 
-        val extract = PdfReader.extract(context, file)
+        // Always clean up temporary statement data, including unreadable PDFs.
+        val extract = try {
+            PdfReader.extract(context, file)
+        } finally {
+            file.delete()
+        }
         val rawText = when (extract) {
             is PdfReader.Result.Error -> return ImportResult.Error(extract.message)
             is PdfReader.Result.Success -> extract.text
         }
-        file.delete()
         return when (extract) {
             is PdfReader.Result.Success -> {
                 val closing = TextCleaner.closingBalance(rawText)
@@ -313,7 +317,7 @@ object ImportRepository {
                         val read = input.read(buffer)
                         if (read < 0) break
                         total += read
-                        if (total > MAX_IMPORT_BYTES) return null
+                        if (total > MAX_IMPORT_BYTES) throw IllegalArgumentException("File too large")
                         output.write(buffer, 0, read)
                     }
                 }
