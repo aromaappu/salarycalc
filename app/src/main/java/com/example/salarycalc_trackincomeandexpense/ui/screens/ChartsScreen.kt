@@ -26,6 +26,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
@@ -227,6 +229,9 @@ fun ChartsScreen(
                 } else {
                     Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
                         Canvas(Modifier.size(180.dp)) {
+                            val stroke = 28.dp.toPx()
+                            val inset = stroke / 2f
+                            val arcSize = Size(size.width - stroke, size.height - stroke)
                             var angle = -90f
                             catTotals.forEachIndexed { index, (_, value) ->
                                 val sweep = (value / totalExp * 360.0).toFloat().coerceAtLeast(0f)
@@ -236,7 +241,9 @@ fun ChartsScreen(
                                         startAngle = angle,
                                         sweepAngle = sweep,
                                         useCenter = false,
-                                        style = Stroke(width = 28.dp.toPx())
+                                        style = Stroke(width = stroke),
+                                        topLeft = Offset(inset, inset),
+                                        size = arcSize
                                     )
                                 }
                                 angle += sweep
@@ -245,6 +252,9 @@ fun ChartsScreen(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("Total spent", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(formatCurrency(currency, totalExp), fontSize = 14.sp,
+                                modifier = Modifier.width(130.dp),
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                                 fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                         }
                     }
