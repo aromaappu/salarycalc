@@ -56,6 +56,7 @@ object ImportRepository {
             val confidence: Float,
             val source: String,
             val closingBalance: Double = 0.0,
+            val openingBalance: Double? = null,
             val skippedRows: Int = 0,
             val warnings: List<String> = emptyList(),
             val possibleDuplicateHashes: Set<String> = emptySet()
@@ -133,6 +134,13 @@ object ImportRepository {
         val deduped = DuplicateChecker.dedupe(selection.transactions, db)
         val incompleteRows = coordinateRows.count { it.status != "VALID" }
         val warnings = selection.warnings.toMutableList()
+        val coverage = PdfCoverageAuditor.check(
+            (extract as PdfReader.Result.Success).pages, selection.transactions
+        )
+        warnings.addAll(coverage.warnings)
+        if (opening == null || closing == null) {
+            warnings.add("Statement does not provide both opening and closing balances; completeness cannot be proven.")
+        }
         if (deduped.duplicateCount > 0) {
             warnings.add("${deduped.duplicateCount} already-imported transaction(s) skipped.")
         }
@@ -153,6 +161,7 @@ object ImportRepository {
             confidence = selection.confidence,
             source = selection.source,
             closingBalance = closing ?: closingBalance(selection.transactions),
+            openingBalance = opening,
             skippedRows = selection.rejected + if (selection.source == "PDF LAYOUT") incompleteRows else 0,
             warnings = warnings.distinct(),
             possibleDuplicateHashes = deduped.possibleDuplicateHashes
