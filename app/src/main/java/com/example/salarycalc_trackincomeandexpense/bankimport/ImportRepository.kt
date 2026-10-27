@@ -56,7 +56,8 @@ object ImportRepository {
             val confidence: Float,
             val source: String,
             val closingBalance: Double = 0.0,
-            val skippedRows: Int = 0
+            val skippedRows: Int = 0,
+            val warnings: List<String> = emptyList()
         ) : ImportResult()
 
         data class Error(val message: String) : ImportResult()
@@ -84,36 +85,70 @@ object ImportRepository {
             is PdfReader.Result.Error -> return ImportResult.Error(extract.message)
             is PdfReader.Result.Success -> extract.text
         }
-        return when (extract) {
-            is PdfReader.Result.Success -> {
-                val closing = TextCleaner.closingBalance(rawText)
-                val coordinateParser = CoordinateStatementParser()
-                val parsedRows = coordinateParser.parse(extract.elements)
-                val coordinateTxs = parsedRows.mapNotNull { row ->
-                    if (row.date == null || row.description.isBlank() || (row.debit == null && row.credit == null)) return@mapNotNull null
-                    val amount = (row.debit ?: row.credit ?: BigDecimal.ZERO)
-                    val type = if (row.debit != null) "DEBIT" else "CREDIT"
-                    val hash = HashGenerator.generate(row.date, amount.toDouble(), row.description, "")
-                    ParsedTransaction(
-                        row.date,
-                        row.description,
-                        amount.toDouble(),
-                        type,
-                        row.balance?.toDouble() ?: 0.0,
-                        "",
-                        hash,
-                        confidence = 0.93f
-                    )
-                }
-                if (coordinateTxs.isNotEmpty()) {
-                    val validated = TransactionValidator.validate(coordinateTxs)
-                    val deduped = DuplicateChecker.dedupe(validated.valid, db)
-                    return finalize(deduped.unique, "COORDINATE PDF", db, "PDF", fileName, viaOcr = extract.viaOcr, closingOverride = closing)
-                }
-                processText(rawText, db, apiKey, "PDF", fileName, viaOcr = extract.viaOcr, closingOverride = closing)
-            }
-            is PdfReader.Result.Error -> ImportResult.Error(extract.message)
+        val bank = BankDetector.detect(rawText)
+        val cleaned = TextCleaner.clean(rawText)
+        val opening = TextCleaner.openingBalance(rawText)
+        val closing = TextCleaner.closingBalance(rawText)
+        val bankParsed = ParserRegistry.get(bank).parse(cleaned)
+        val universalParsed = UniversalParser().parse(cleaned, opening)
+
+        val coordinateRows = CoordinateStatementParser().parse(
+            (extract as PdfReader.Result.Success).elements
+        )
+        val coordinateTxs = coordinateRows.mapNotNull { row ->
+            if (row.status != "VALID" || row.date == null ||
+                row.description.isBlank() || (row.debit == null && row.credit == null)
+            ) return@mapNotNull null
+
+            val amount = (row.debit ?: row.credit ?: BigDecimal.ZERO).toDouble()
+            val type = if (row.debit != null) "DEBIT" else "CREDIT"
+            val description = StatementNormalizer.cleanNarration(row.description)
+            val reference = Regex("(?:UPI|IMPS|NEFT|RTGS)/(?:DR|CR)/([^/\\s]+)", RegexOption.IGNORE_CASE)
+                .find(row.description)?.groupValues?.getOrNull(1).orEmpty()
+            ParsedTransaction(
+                date = row.date,
+                description = description,
+                amount = amount,
+                type = type,
+                balance = row.balance?.toDouble() ?: 0.0,
+                reference = reference,
+                hash = HashGenerator.generate(row.date, amount, description, reference),
+                confidence = 0.85f
+            )
         }
+
+        val selection = PdfCandidateSelector.choose(
+            listOf(
+                PdfCandidateSelector.Candidate("BANK REGEX", bankParsed.transactions, bankParsed.confidence),
+                PdfCandidateSelector.Candidate("UNIVERSAL", universalParsed.transactions, universalParsed.confidence),
+                PdfCandidateSelector.Candidate("PDF LAYOUT", coordinateTxs, 0.85f)
+            ),
+            opening,
+            closing
+        ) ?: return ImportResult.Error(
+            "Could not read transactions reliably from this PDF. Try a clearer statement or a CSV export."
+        )
+
+        val deduped = DuplicateChecker.dedupe(selection.transactions, db)
+        val incompleteRows = coordinateRows.count { it.status != "VALID" }
+        val warnings = selection.warnings.toMutableList()
+        if (incompleteRows > 0 && selection.source == "PDF LAYOUT") {
+            warnings.add("$incompleteRows PDF table rows could not be interpreted.")
+        }
+        if ((extract as PdfReader.Result.Success).viaOcr) {
+            warnings.add("Scanned PDF: OCR may misread names, amounts and dates.")
+        }
+        // Bank PDFs never auto-save: missing rows and bank-specific layouts
+        // cannot be proven correct by parser confidence alone.
+        return ImportResult.NeedsPreview(
+            transactions = deduped.unique,
+            bank = bank.displayName,
+            confidence = selection.confidence,
+            source = selection.source,
+            closingBalance = closing ?: closingBalance(selection.transactions),
+            skippedRows = selection.rejected + if (selection.source == "PDF LAYOUT") incompleteRows else 0,
+            warnings = warnings.distinct()
+        )
     }
 
     fun processCsv(
