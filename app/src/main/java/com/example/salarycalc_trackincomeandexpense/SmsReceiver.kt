@@ -764,7 +764,8 @@ class SmsReceiver : BroadcastReceiver() {
             context.sendBroadcast(Intent(AutoEvents.ACTION_NEW_SMS_TRANSACTION))
         } else {
             // Auto-save: persist to store AND broadcast for live app
-            autoSaveTransaction(context, transaction)
+            if (!autoSaveTransaction(context, transaction)) return
+            NotificationHelper.showTransactionNotification(context, transaction, needsApproval = false)
             // Notify app directly
             val txType = if (transaction.transactionType == "credit") "income" else "expense"
             val txName = transaction.merchant.ifEmpty { transaction.category }
@@ -786,7 +787,7 @@ class SmsReceiver : BroadcastReceiver() {
             a.time == b.time
     }
 
-    private fun autoSaveTransaction(context: Context, transaction: TransactionData) {
+    private fun autoSaveTransaction(context: Context, transaction: TransactionData): Boolean {
         // Write straight into the database so the transaction is added
         // immediately (no app restart or broadcast listener needed).
         val txType = if (transaction.transactionType == "credit") "income" else "expense"
@@ -802,19 +803,19 @@ class SmsReceiver : BroadcastReceiver() {
                 it.name.equals(txName, ignoreCase = true) &&
                 it.date == date
         }
-        if (exists) return
+        if (exists) return false
 
         if (txType == AppDatabase.TYPE_INCOME) {
             if (!db.getIncomeSources().contains(txName)) db.addIncomeSource(txName)
         } else {
             if (!db.getExpenseCategories().contains(txName)) db.addExpenseCategory(txName)
         }
-        db.addTransaction(
+        return db.addTransaction(
             type = txType,
             amount = transaction.amount,
             name = txName,
             date = date
-        )
+        ) > 0
     }
 
     private fun getPendingTransactions(prefs: SharedPreferences): List<TransactionData> {
@@ -913,7 +914,8 @@ class SmsReceiver : BroadcastReceiver() {
         prefs.edit()
             .putString(KEY_PENDING_TRANSACTIONS, serializeTransactions(pending))
             .apply()
-        autoSaveTransaction(context, transaction)
+        if (!autoSaveTransaction(context, transaction)) return null
+        NotificationHelper.showTransactionNotification(context, transaction, needsApproval = false)
         val txType = if (transaction.transactionType == "credit") "income" else "expense"
         val txName = transaction.merchant.ifEmpty { transaction.category }
         val intent = Intent(AutoEvents.ACTION_AUTO_TRANSACTION)
