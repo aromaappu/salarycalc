@@ -33,7 +33,8 @@ data class Reminder(
     val id: Long,
     val name: String,
     val amount: Double,
-    val date: String               // "yyyy-MM-dd"
+    val date: String,              // "yyyy-MM-dd"
+    val repeatMonthly: Boolean = false
 )
 
 data class Note(
