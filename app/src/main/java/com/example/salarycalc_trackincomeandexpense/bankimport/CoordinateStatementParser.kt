@@ -36,9 +36,9 @@ class CoordinateStatementParser {
         if (elements.isEmpty()) return emptyList()
         val layout = inferLayout(elements)
         val rows = groupByRow(elements, layout)
-        return rows
-            .sortedByDescending { it.firstOrNull()?.y ?: 0f }
-            .mapNotNull { row -> buildRow(row, layout) }
+        // PDFBox already supplies elements in reading order. Sorting by Y
+        // reverses some banks' statements and merges same-Y rows across pages.
+        return rows.mapNotNull { row -> buildRow(row, layout) }
     }
 
     private fun inferLayout(elements: List<PdfReader.PdfTextElement>): BankStatementLayout {
@@ -58,10 +58,13 @@ class CoordinateStatementParser {
 
     private fun groupByRow(elements: List<PdfReader.PdfTextElement>, layout: BankStatementLayout): List<List<PdfReader.PdfTextElement>> {
         val rows = mutableListOf<MutableList<PdfReader.PdfTextElement>>()
-        elements.sortedBy { it.y }.forEach { element ->
+        elements.forEach { element ->
             val last = rows.lastOrNull()
             val candidate = last?.firstOrNull()
-            if (last != null && candidate != null && kotlin.math.abs(element.y - candidate.y) <= ROW_Y_TOLERANCE) {
+            if (last != null && candidate != null &&
+                element.pageNumber == candidate.pageNumber &&
+                kotlin.math.abs(element.y - candidate.y) <= ROW_Y_TOLERANCE
+            ) {
                 last.add(element)
             } else {
                 rows.add(mutableListOf(element))
