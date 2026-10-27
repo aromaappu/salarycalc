@@ -69,6 +69,7 @@ private sealed class ScreenState {
         val source: String,
         val fileName: String,
         val closingBalance: Double = 0.0,
+        val openingBalance: Double? = null,
         val skippedRows: Int = 0,
         val warnings: List<String> = emptyList(),
         val possibleDuplicateHashes: Set<String> = emptySet()
@@ -153,6 +154,7 @@ fun BankStatementScreen(
                         source = result.source,
                         fileName = name,
                         closingBalance = result.closingBalance,
+                        openingBalance = result.openingBalance,
                         skippedRows = result.skippedRows,
                         warnings = result.warnings,
                         possibleDuplicateHashes = result.possibleDuplicateHashes
@@ -371,6 +373,31 @@ private fun PreviewScreen(
             list.add(preview.transactions[index].hash !in preview.possibleDuplicateHashes)
         }
     }}
+    var showIntegrityConfirmation by remember { mutableStateOf(false) }
+    val integrityIssue = preview.skippedRows > 0 || preview.warnings.any { warning ->
+        warning.contains("do not reconcile", true) ||
+            warning.contains("do not match", true) ||
+            warning.contains("Check PDF page", true) ||
+            warning.contains("parser", true) && warning.contains("disagree", true)
+    }
+
+    if (showIntegrityConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showIntegrityConfirmation = false },
+            title = { Text("Unverified bank statement") },
+            text = { Text("The PDF has missing or conflicting rows/balances. Importing may make your totals wrong. Check the original PDF. Continue only if the selected entries are correct.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showIntegrityConfirmation = false
+                    val toImport = preview.transactions.filterIndexed { i, _ -> selected[i] }
+                    if (toImport.isNotEmpty()) onConfirm(toImport)
+                }) { Text("Import anyway") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showIntegrityConfirmation = false }) { Text("Review again") }
+            }
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -389,6 +416,10 @@ private fun PreviewScreen(
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            preview.openingBalance?.let { opening ->
+                Text("Opening: ₹${"%.2f".format(opening)}  ·  Closing: ₹${"%.2f".format(preview.closingBalance)}",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Text(
                 "Review every PDF transaction against your statement before importing.",
                 fontSize = 12.sp,
@@ -476,7 +507,10 @@ private fun PreviewScreen(
                     .background(Color(0xFF10B981), RoundedCornerShape(8.dp))
                     .clickable {
                         val toImport = preview.transactions.filterIndexed { i, _ -> selected[i] }
-                        if (toImport.isNotEmpty()) onConfirm(toImport)
+                        if (toImport.isNotEmpty()) {
+                            if (integrityIssue) showIntegrityConfirmation = true
+                            else onConfirm(toImport)
+                        }
                     }
                     .padding(vertical = 14.dp),
                 contentAlignment = Alignment.Center
