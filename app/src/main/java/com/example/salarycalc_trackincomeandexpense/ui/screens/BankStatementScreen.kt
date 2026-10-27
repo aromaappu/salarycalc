@@ -105,11 +105,15 @@ fun BankStatementScreen(
                 return@launch
             }
 
-            val result = withContext(Dispatchers.IO) {
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    if (isCsv) ImportRepository.processCsv(stream, db, "", name)
-                    else        ImportRepository.processPdf(context, stream, db, "", name)
-                } ?: ImportRepository.ImportResult.Error("Could not open file")
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        if (isCsv) ImportRepository.processCsv(stream, db, "", name)
+                        else        ImportRepository.processPdf(context, stream, db, "", name)
+                    } ?: ImportRepository.ImportResult.Error("Could not open file")
+                }
+            } catch (e: Exception) {
+                ImportRepository.ImportResult.Error("Could not read this statement: ${e.message}")
             }
 
             when (result) {
