@@ -30,6 +30,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -87,6 +88,7 @@ fun BankStatementScreen(
     var statements by remember { mutableStateOf(db.getBankStatements()) }
     var screenState by remember { mutableStateOf<ScreenState>(ScreenState.Idle) }
     var deleteTarget by remember { mutableStateOf<BankStatementRecord?>(null) }
+    var deleteStep by remember { mutableIntStateOf(1) }
     var importSummary by remember { mutableStateOf<ImportRepository.ImportSummary?>(null) }
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
@@ -129,9 +131,7 @@ fun BankStatementScreen(
                         return@launch
                     }
                     val saved = withContext(Dispatchers.IO) {
-                        ImportRepository.save(result.transactions, db).also {
-                            if (it > 0) db.addBankStatement(name, it, result.summary.closingBalance)
-                        }
+                        ImportRepository.saveStatement(result.transactions, db, name, result.summary.closingBalance)
                     }
                     statements = db.getBankStatements()
                     screenState = ScreenState.Idle
@@ -181,9 +181,7 @@ fun BankStatementScreen(
                 scope.launch {
                     screenState = ScreenState.Loading("Saving…")
                     val saved = withContext(Dispatchers.IO) {
-                        ImportRepository.save(selected, db).also {
-                            if (it > 0) db.addBankStatement(preview.fileName, it, preview.closingBalance)
-                        }
+                        ImportRepository.saveStatement(selected, db, preview.fileName, preview.closingBalance)
                     }
                     statements = db.getBankStatements()
                     screenState = ScreenState.Idle
@@ -265,7 +263,7 @@ fun BankStatementScreen(
                 }
             } else {
                 statements.forEach { stmt ->
-                    StatementRow(stmt, onDelete = { deleteTarget = stmt })
+                    StatementRow(stmt, onDelete = { deleteTarget = stmt; deleteStep = 1 })
                     Spacer(Modifier.height(6.dp))
                 }
             }
@@ -273,20 +271,45 @@ fun BankStatementScreen(
     }
 
     deleteTarget?.let { stmt ->
+        val linkedCount = remember(stmt.id) { db.getLinkedStatementTransactionCount(stmt.id) }
+        val olderUnlinked = stmt.txCount > linkedCount
         AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            title = { Text("Remove statement?") },
-            text = { Text("Remove \"${stmt.fileName}\" from the list? Transactions already added will stay.") },
+            onDismissRequest = { deleteTarget = null; deleteStep = 1 },
+            title = { Text("Delete statement — confirmation $deleteStep of 3") },
+            text = {
+                Column {
+                    Text("File: ${stmt.fileName}")
+                    Spacer(Modifier.height(8.dp))
+                    Text("$linkedCount linked imported transactions will be permanently deleted.")
+                    if (olderUnlinked) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Older imported transactions cannot be safely identified and will be kept.",
+                            color = Color(0xFFDC2626)
+                        )
+                    }
+                    if (deleteStep == 3) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Final confirmation. This cannot be undone.", color = Color(0xFFDC2626))
+                    }
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
-                    db.deleteBankStatement(stmt.id)
-                    statements = db.getBankStatements()
-                    deleteTarget = null
-                    toast("Statement removed — transactions kept")
-                }) { Text("Remove") }
+                    if (deleteStep < 3) {
+                        deleteStep++
+                    } else {
+                        val removed = db.deleteBankStatementAndLinkedTransactions(stmt.id)
+                        statements = db.getBankStatements()
+                        deleteTarget = null
+                        deleteStep = 1
+                        AutoEvents.refreshTick.intValue++
+                        toast("Statement deleted with $removed linked transactions")
+                    }
+                }) { Text(if (deleteStep == 3) "Permanently delete" else "Continue") }
             },
             dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("Cancel") }
+                TextButton(onClick = { deleteTarget = null; deleteStep = 1 }) { Text("Cancel") }
             }
         )
     }
