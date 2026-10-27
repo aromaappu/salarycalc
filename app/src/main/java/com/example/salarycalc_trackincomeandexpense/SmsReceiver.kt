@@ -264,15 +264,16 @@ class SmsReceiver : BroadcastReceiver() {
             // Store as pending — confirmation popup will show in app
             val pending = getPendingTransactions(prefs).toMutableList()
             pending.add(transaction)
-            prefs.edit()
+            val saved = prefs.edit()
                 .putString(KEY_PENDING_TRANSACTIONS, serializeTransactions(pending))
-                .apply()
+                .commit()
+            if (!saved) return
             NotificationHelper.showTransactionNotification(context, transaction)
             // Notify app to load pending transactions
             context.sendBroadcast(Intent(AutoEvents.ACTION_NEW_SMS_TRANSACTION))
         } else {
             // Auto-save: persist to store AND broadcast for live app
-            autoSaveTransaction(context, transaction)
+            if (!autoSaveTransaction(context, transaction)) return
             // Notify app directly
             val txType = if (transaction.transactionType == "credit") "income" else "expense"
             val txName = transaction.merchant.ifEmpty { transaction.category }
@@ -287,7 +288,7 @@ class SmsReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun autoSaveTransaction(context: Context, transaction: TransactionData) {
+    private fun autoSaveTransaction(context: Context, transaction: TransactionData): Boolean = try {
         // Write straight into the database so the transaction is added
         // immediately (no app restart or broadcast listener needed).
         val txType = if (transaction.transactionType == "credit") "income" else "expense"
@@ -308,7 +309,9 @@ class SmsReceiver : BroadcastReceiver() {
             amount = transaction.amount,
             name = txName,
             date = date
-        )
+        ) > 0L
+    } catch (_: Exception) {
+        false
     }
 
     private fun getPendingTransactions(prefs: SharedPreferences): List<TransactionData> {
@@ -395,7 +398,10 @@ class SmsReceiver : BroadcastReceiver() {
             val old = recent[match]
             recent[match] = old.copy(
                 sources = old.sources + incoming.sources,
-                reference = old.reference.ifBlank { incoming.reference }
+                reference = old.reference.ifBlank { incoming.reference },
+                // Remember the most recently seen source payload so its repost is ignored.
+                timestamp = incoming.timestamp,
+                message = incoming.message
             )
             writeRecentPayments(prefs, recent)
             return@synchronized false
@@ -461,11 +467,13 @@ class SmsReceiver : BroadcastReceiver() {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val pending = getPendingTransactions(prefs).toMutableList()
         if (index !in pending.indices) return null
-        val transaction = pending.removeAt(index)
-        prefs.edit()
-            .putString(KEY_PENDING_TRANSACTIONS, serializeTransactions(pending))
-            .apply()
-        autoSaveTransaction(context, transaction)
+        val transaction = pending[index]
+        if (!autoSaveTransaction(context, transaction)) return null
+        pending.removeAt(index)
+        if (!prefs.edit()
+                .putString(KEY_PENDING_TRANSACTIONS, serializeTransactions(pending))
+                .commit()
+        ) return null
         val txType = if (transaction.transactionType == "credit") "income" else "expense"
         val txName = transaction.merchant.ifEmpty { transaction.category }
         val intent = Intent(AutoEvents.ACTION_AUTO_TRANSACTION)
