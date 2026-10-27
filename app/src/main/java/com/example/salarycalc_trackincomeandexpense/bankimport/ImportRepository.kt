@@ -44,7 +44,7 @@ object ImportRepository {
         val pdfPages: Int? = null,
         val pagesToReview: List<Int> = emptyList(),
         val openingBalance: Double? = null,
-        val closingBalanceVerified: Boolean = false,
+        val closingBalanceExtracted: Boolean = false,
         val runningBalanceChecks: Int = 0,
         val runningBalanceMismatches: Int = 0,
         val totalsMismatch: Boolean? = null,
@@ -145,7 +145,9 @@ object ImportRepository {
         )
 
         val deduped = DuplicateChecker.dedupe(selection.transactions, db)
-        val incompleteRows = coordinateRows.count { it.status != "VALID" }
+        val incompleteRows = coordinateRows.count { row ->
+            row.status != "VALID" && (row.date != null || row.debit != null || row.credit != null)
+        }
         val warnings = selection.warnings.toMutableList()
         val coverage = PdfCoverageAuditor.check(
             (extract as PdfReader.Result.Success).pages, selection.transactions
@@ -184,7 +186,7 @@ object ImportRepository {
             pdfPages = coverage.pageCount,
             pagesToReview = coverage.pagesToReview,
             openingBalance = opening,
-            closingBalanceVerified = verified,
+            closingBalanceExtracted = closing != null,
             runningBalanceChecks = audit.checkedBalances,
             runningBalanceMismatches = audit.inconsistentBalances,
             totalsMismatch = if (verified) audit.totalsMismatch else null,
@@ -249,7 +251,7 @@ object ImportRepository {
             openingBalance = TextCleaner.openingBalance(rawText),
             closingBalance = TextCleaner.closingBalance(rawText)
                 ?: closingBalance(read.transactions),
-            closingBalanceVerified = TextCleaner.closingBalance(rawText) != null,
+            closingBalanceExtracted = TextCleaner.closingBalance(rawText) != null,
             possibleDuplicates = dedupedCsv.possibleDuplicateHashes.size,
             warnings = buildList {
                 if (skipped > 0) add("$skipped CSV rows could not be validated.")
