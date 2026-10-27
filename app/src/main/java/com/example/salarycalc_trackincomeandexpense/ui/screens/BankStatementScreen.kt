@@ -366,7 +366,7 @@ fun BankStatementScreen(
                     report.openingBalance?.let {
                         SummaryRow("Opening balance", "₹${"%.2f".format(it)}")
                     }
-                    if (report.closingBalanceVerified) {
+                    if (report.closingBalanceExtracted) {
                         SummaryRow("Reported closing balance", "₹${"%.2f".format(report.closingBalance)}")
                     }
                     if (report.viaOcr) {
@@ -401,8 +401,12 @@ private fun SummaryRow(label: String, value: String) {
         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text(label, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+        Text(label, modifier = Modifier.weight(1f), fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(8.dp))
+        Text(value, modifier = Modifier.weight(1f), fontSize = 12.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 
