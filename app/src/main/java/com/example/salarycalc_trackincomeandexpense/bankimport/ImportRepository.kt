@@ -95,7 +95,8 @@ object ImportRepository {
         val universalParsed = UniversalParser().parse(cleaned, opening)
 
         val coordinateRows = CoordinateStatementParser().parse(
-            (extract as PdfReader.Result.Success).elements
+            (extract as PdfReader.Result.Success).elements,
+            opening?.let { java.math.BigDecimal.valueOf(it) }
         )
         val coordinateTxs = coordinateRows.mapNotNull { row ->
             if (row.status != "VALID" || row.date == null ||
