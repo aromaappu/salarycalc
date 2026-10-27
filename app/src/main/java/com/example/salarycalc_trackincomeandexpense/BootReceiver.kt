@@ -71,6 +71,7 @@ class BootReceiver : BroadcastReceiver() {
                 scheduleAlarm(context, alarmManager, id, title, message, timestampMillis, type, amount, category)
             }
             NotificationStore.removeExpired(context)
+            ReminderScheduler.reconcileMonthly(context)
         } catch (e: Exception) {
             // If saved data is empty/corrupt, just skip silently
         }
