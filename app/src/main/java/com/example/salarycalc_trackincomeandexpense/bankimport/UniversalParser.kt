@@ -32,6 +32,7 @@ class UniversalParser(override val bank: BankDetector.Bank = BankDetector.Bank.U
         "\\b(\\d{2}[-/. ]\\d{2}[-/. ]\\d{4}|" +
             "\\d{4}[-/. ]\\d{2}[-/. ]\\d{2}|" +
             "\\d{1,2}[-/. ]\\d{1,2}[-/. ]\\d{4}|" +
+            "\\d{1,2}[-/. ]\\d{1,2}[-/. ]\\d{2}|" +
             "\\d{1,2}[-/. ](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-. ]\\d{4}|" +
             "\\d{1,2}\\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s\\d{4}|" +
             "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-. ]\\d{1,2}[-,]?[-. ]\\d{4})\\b",
