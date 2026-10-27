@@ -29,7 +29,12 @@ object PdfReader {
     )
 
     sealed class Result {
-        data class Success(val text: String, val viaOcr: Boolean, val elements: List<PdfTextElement> = emptyList()) : Result()
+        data class Success(
+            val text: String,
+            val viaOcr: Boolean,
+            val elements: List<PdfTextElement> = emptyList(),
+            val pages: List<String> = emptyList()
+        ) : Result()
         data class Error(val message: String) : Result()
     }
 
@@ -101,7 +106,14 @@ object PdfReader {
                 if (text.isBlank()) {
                     Result.Error("No statement text found in the PDF.")
                 } else {
-                    Result.Success(text, viaOcr = scanPages.isNotEmpty(), elements = pageElements.toList())
+                    Result.Success(
+                        text = text,
+                        viaOcr = scanPages.isNotEmpty(),
+                        elements = pageElements.toList(),
+                        pages = pageTexts.keys.map { page ->
+                            ocrPages[page]?.takeIf { it.isNotBlank() } ?: pageTexts[page].orEmpty()
+                        }
+                    )
                 }
             } finally {
                 try { doc.close() } catch (_: Exception) {}
