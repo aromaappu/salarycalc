@@ -74,6 +74,14 @@ object ReminderScheduler {
             "${reminder.name} due: ₹${reminder.amount}", candidate.toString())
     }
 
+    fun reconcileMonthly(context: Context) {
+        val db = com.example.salarycalc_trackincomeandexpense.data.AppDatabase(context)
+        db.getReminders().filter { it.repeatMonthly }.forEach { reminder ->
+            scheduleNextMonthly(context, reminder.id)
+        }
+        db.close()
+    }
+
     // Shows an instant notification when a reminder is due today (matches original addReminder())
     fun showInstant(context: Context, id: Int, title: String, message: String) {
         NotificationHelper.showNotification(context, id, title, message)
