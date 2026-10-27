@@ -55,7 +55,8 @@ object ImportRepository {
             val bank: String,
             val confidence: Float,
             val source: String,
-            val closingBalance: Double = 0.0
+            val closingBalance: Double = 0.0,
+            val skippedRows: Int = 0
         ) : ImportResult()
 
         data class Error(val message: String) : ImportResult()
@@ -123,13 +124,34 @@ object ImportRepository {
             return ImportResult.Error("Could not read CSV: ${e.message}")
         }
 
-        // Try the CSV reader first (already in the standard CSV format)
-        val csvTxs = try { CsvReader.read(rawText.byteInputStream(Charsets.UTF_8)) } catch (_: Exception) { emptyList() }
-        if (csvTxs.isNotEmpty()) {
-            val bank = BankDetector.detect(rawText).displayName
-            return finalize(csvTxs, bank, db, "CSV", fileName, viaOcr = false, closingOverride = TextCleaner.closingBalance(rawText))
+        val read = try {
+            CsvReader.readDetailed(rawText.byteInputStream(Charsets.UTF_8))
+        } catch (e: Exception) {
+            return ImportResult.Error("Could not parse CSV: ${e.message}")
         }
-        return processText(rawText, db, apiKey, "CSV", fileName, viaOcr = false, closingOverride = TextCleaner.closingBalance(rawText))
+        if (read.transactions.isEmpty()) {
+            return ImportResult.Error(
+                if (read.dataRows > 0) "CSV rows found, but none could be safely imported. Check the date and amount columns."
+                else "CSV column headings not recognized. Expected Date and Debit/Credit or Amount columns."
+            )
+        }
+        val bank = BankDetector.detect(rawText).displayName
+        val validated = TransactionValidator.validate(read.transactions)
+        val skipped = read.skippedRows + validated.rejected
+        if (read.needsReview || skipped > 0) {
+            val deduped = DuplicateChecker.dedupe(validated.valid, db)
+            return ImportResult.NeedsPreview(
+                transactions = deduped.unique,
+                bank = bank,
+                confidence = if (read.needsReview) 0.75f else 0.97f,
+                source = "CSV",
+                closingBalance = TextCleaner.closingBalance(rawText)
+                    ?: closingBalance(read.transactions),
+                skippedRows = skipped
+            )
+        }
+        return finalize(read.transactions, bank, db, "CSV", fileName,
+            viaOcr = false, closingOverride = TextCleaner.closingBalance(rawText))
     }
 
     /**
@@ -151,13 +173,15 @@ object ImportRepository {
             } else {
                 rawName.ifEmpty { if (tx.type == "CREDIT") "Credit" else "Expense" }
             }
-            if (type == AppDatabase.TYPE_INCOME) {
-                if (!incomeSources.contains(name)) { db.addIncomeSource(name); incomeSources.add(name) }
-            } else {
-                if (!expenseCategories.contains(name)) { db.addExpenseCategory(name); expenseCategories.add(name) }
-            }
             val id = db.addTransactionWithHash(type, tx.amount, name, tx.date, tx.hash)
-            if (id > 0) saved++
+            if (id > 0) {
+                saved++
+                if (type == AppDatabase.TYPE_INCOME) {
+                    if (incomeSources.add(name)) db.addIncomeSource(name)
+                } else {
+                    if (expenseCategories.add(name)) db.addExpenseCategory(name)
+                }
+            }
         }
         return saved
     }
@@ -192,11 +216,13 @@ object ImportRepository {
         val validated = TransactionValidator.validate(parsed)
         val deduped = DuplicateChecker.dedupe(validated.valid, db)
 
-        if (confidence >= CONFIDENCE_AUTO_IMPORT && !viaOcr) {
-            return finalize(deduped.unique, bank.displayName, db, source, fileName, viaOcr, closingOverride)
+        if (confidence >= CONFIDENCE_AUTO_IMPORT && !viaOcr && sourceHint != "PDF" &&
+            validated.rejected == 0) {
+            // Finalize the original rows so duplicate/error counts stay accurate.
+            return finalize(parsed, bank.displayName, db, source, fileName, viaOcr, closingOverride)
         }
 
-        // OCR or low confidence transactions must be reviewed before saving
+        // PDFs, OCR, uncertain classifications and rejected rows require review.
         return ImportResult.NeedsPreview(
             transactions = deduped.unique,
             bank = bank.displayName,
@@ -207,9 +233,9 @@ object ImportRepository {
     }
 
     /**
-     * Validation → standard CSV → read CSV back → duplicate removal.
-     * The CSV round-trip guarantees the exact bytes that the import step will
-     * consume, so the DB always sees one canonical format.
+     * Keep the validated original transactions: exporting and re-reading CSV
+     * discards bank reference IDs and changes transaction hashes, allowing
+     * the same transaction to be imported twice through different paths.
      */
     private fun finalize(
         txs: List<ParsedTransaction>,
@@ -221,13 +247,11 @@ object ImportRepository {
         closingOverride: Double? = null
     ): ImportResult {
         val validated = TransactionValidator.validate(txs)
-        val csv = CsvGenerator.generate(validated.valid)
-        val roundTrip = CsvReader.read(csv.byteInputStream(Charsets.UTF_8))
-        val deduped = DuplicateChecker.dedupe(roundTrip, db)
+        val deduped = DuplicateChecker.dedupe(validated.valid, db)
 
         // Prefer the statement's own "Closing Balance" line when present;
         // fall back to the running balance of the last transaction.
-        val closing = closingOverride ?: closingBalance(roundTrip)
+        val closing = closingOverride ?: closingBalance(validated.valid)
 
         val summary = ImportSummary(
             fileName = fileName,
