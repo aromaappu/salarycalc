@@ -47,36 +47,61 @@ object PdfReader {
                 if (doc.numberOfPages == 0) {
                     return Result.Error("This PDF contains no pages.")
                 }
-                // Extraction state belongs to this file, never to earlier uploads.
+                // Keep text and positions separate by page. A statement may
+                // mix selectable-text pages and image-only/scanned pages.
                 val pageElements = mutableListOf<PdfTextElement>()
-                val stripper = object : PDFTextStripper() {
-                    override fun writeString(text: String, textPositions: List<TextPosition>) {
-                        if (textPositions.isEmpty()) return
-                        val first = textPositions.first()
-                        val last = textPositions.last()
-                        val x = first.xDirAdj
-                        val y = first.yDirAdj
-                        val width = (last.xDirAdj + last.widthOfSpace) - x
-                        val height = (textPositions.maxOfOrNull { it.heightDir } ?: 0f)
-                        val page = currentPageNo
-                        pageElements.add(PdfTextElement(text.trim(), x, y, width, height, page))
-                        super.writeString(text, textPositions)
+                val pageTexts = linkedMapOf<Int, String>()
+                for (pageNumber in 1..doc.numberOfPages) {
+                    val stripper = object : PDFTextStripper() {
+                        override fun writeString(text: String, textPositions: List<TextPosition>) {
+                            if (textPositions.isNotEmpty()) {
+                                val first = textPositions.first()
+                                val last = textPositions.last()
+                                pageElements.add(
+                                    PdfTextElement(
+                                        text.trim(),
+                                        first.xDirAdj,
+                                        first.yDirAdj,
+                                        (last.xDirAdj + last.widthOfSpace) - first.xDirAdj,
+                                        textPositions.maxOfOrNull { it.heightDir } ?: 0f,
+                                        pageNumber
+                                    )
+                                )
+                            }
+                            super.writeString(text, textPositions)
+                        }
+                    }.apply {
+                        sortByPosition = true
+                        startPage = pageNumber
+                        endPage = pageNumber
                     }
-                }.apply { sortByPosition = true }
-                val text = stripper.getText(doc)
-                val stripped = text.replace(Regex("\\s+"), " ").trim()
+                    pageTexts[pageNumber - 1] = stripper.getText(doc)
+                }
 
-                if (stripped.length < MIN_TEXT_LENGTH) {
-                    // No selectable text → scanned/image-only → OCR fallback
-                    ImportLogger.d("PDF has no selectable text (${stripped.length} chars) — running OCR")
-                    val ocrText = OcrHelper.recognize(context, file)
-                    if (ocrText.isNullOrBlank()) {
-                        Result.Error("No text could be read from this PDF. It may be a low-quality scanned document.")
-                    } else {
-                        Result.Success(ocrText, viaOcr = true)
-                    }
+                val scanPages = pageTexts.filterValues {
+                    it.replace(Regex("\\s+"), " ").trim().length < MIN_TEXT_LENGTH
+                }.keys.toSet()
+                val ocrPages = if (scanPages.isNotEmpty()) {
+                    OcrHelper.recognizePages(context, file, scanPages)
+                } else emptyMap()
+
+                // Never silently omit an unreadable page from a statement.
+                val unreadable = scanPages.filter { index ->
+                    ocrPages[index].isNullOrBlank() && pageTexts[index].isNullOrBlank()
+                }
+                if (unreadable.isNotEmpty()) {
+                    return Result.Error(
+                        "Could not read PDF page(s) ${unreadable.map { it + 1 }.joinToString(", ")}. " +
+                            "Please use a clearer bank statement."
+                    )
+                }
+                val text = pageTexts.keys.joinToString("\n") { page ->
+                    ocrPages[page]?.takeIf { it.isNotBlank() } ?: pageTexts[page].orEmpty()
+                }
+                if (text.isBlank()) {
+                    Result.Error("No statement text found in the PDF.")
                 } else {
-                    Result.Success(text, viaOcr = false, elements = pageElements.toList())
+                    Result.Success(text, viaOcr = scanPages.isNotEmpty(), elements = pageElements.toList())
                 }
             } finally {
                 try { doc.close() } catch (_: Exception) {}
