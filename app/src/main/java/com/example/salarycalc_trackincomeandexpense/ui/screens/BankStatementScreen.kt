@@ -68,7 +68,8 @@ private sealed class ScreenState {
         val source: String,
         val fileName: String,
         val closingBalance: Double = 0.0,
-        val skippedRows: Int = 0
+        val skippedRows: Int = 0,
+        val warnings: List<String> = emptyList()
     ) : ScreenState()
 }
 
@@ -151,7 +152,8 @@ fun BankStatementScreen(
                         source = result.source,
                         fileName = name,
                         closingBalance = result.closingBalance,
-                        skippedRows = result.skippedRows
+                        skippedRows = result.skippedRows,
+                        warnings = result.warnings
                     )
                 }
 
@@ -361,13 +363,20 @@ private fun PreviewScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                if (preview.skippedRows > 0)
-                    "${preview.skippedRows} statement rows could not be parsed. Verify the file before importing."
-                else
-                    "Review names, dates, debit/credit and amounts; uncheck incorrect rows.",
+                "Review every PDF transaction against your statement before importing.",
                 fontSize = 12.sp,
                 color = Color(0xFFF59E0B)
             )
+            if (preview.skippedRows > 0) {
+                Text(
+                    "${preview.skippedRows} PDF rows could not be validated; check for missing transactions.",
+                    fontSize = 12.sp,
+                    color = Color(0xFFEF4444)
+                )
+            }
+            preview.warnings.forEach { warning ->
+                Text(warning, fontSize = 12.sp, color = Color(0xFFEF4444))
+            }
         }
 
         LazyColumn(
