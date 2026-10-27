@@ -21,9 +21,15 @@ object CsvReader {
      * rows rather than silently claiming they were imported.
      */
     fun readDetailed(stream: InputStream): ReadResult {
-        val content = stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            .removePrefix("\uFEFF")
-        val records = parseRecords(content)
+        val bytes = stream.use { it.readBytes() }
+        val content = when {
+            bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte() ->
+                String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+            bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte() ->
+                String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+            else -> String(bytes, Charsets.UTF_8).removePrefix("\uFEFF")
+        }
+        val records = parseRecords(content, detectDelimiter(content))
         if (records.isEmpty()) return ReadResult(emptyList(), 0, 0, false)
 
         val headerIndex = records.indexOfFirst { row ->
@@ -137,8 +143,19 @@ object CsvReader {
         return result
     }
 
+    private fun detectDelimiter(csv: String): Char {
+        val header = csv.lineSequence().take(25).firstOrNull {
+            it.contains("date", true) && (it.contains("amount", true) ||
+                it.contains("debit", true) || it.contains("withdrawal", true) ||
+                it.contains("credit", true) || it.contains("deposit", true))
+        } ?: csv.lineSequence().firstOrNull().orEmpty()
+        return listOf(',', ';', '\t').maxByOrNull { separator ->
+            header.count { it == separator }
+        } ?: ','
+    }
+
     /** RFC 4180 fields, including doubled quote escapes and multiline descriptions. */
-    private fun parseRecords(csv: String): List<List<String>> {
+    private fun parseRecords(csv: String, delimiter: Char): List<List<String>> {
         val records = mutableListOf<List<String>>()
         var cells = mutableListOf<String>()
         val cell = StringBuilder()
@@ -152,7 +169,7 @@ object CsvReader {
                         i++
                     } else quoted = !quoted
                 }
-                ',' -> if (quoted) cell.append(ch) else {
+                delimiter -> if (quoted) cell.append(ch) else {
                     cells.add(cell.toString().trim())
                     cell.setLength(0)
                 }
