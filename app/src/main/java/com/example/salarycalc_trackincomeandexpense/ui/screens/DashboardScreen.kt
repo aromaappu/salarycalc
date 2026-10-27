@@ -1,5 +1,6 @@
 package com.example.salarycalc_trackincomeandexpense.ui.screens
 
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -34,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.salarycalc_trackincomeandexpense.R
@@ -163,12 +165,8 @@ private fun DashboardHeader(
                         fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold
                     )
-                    Text(
-                        text = if (balanceVisible) formatCurrency(currency, balance) else "•••",
-                        color = Color.White,
-                        fontSize = 34.sp,
-                        fontWeight = FontWeight.Black
-                    )
+                    AnimatedMaskedAmount(formatCurrency(currency, balance), balanceVisible,
+                        Color.White, 34.sp, FontWeight.Black)
                 }
                 androidx.compose.material3.IconButton(
                     onClick = onToggleBalance,
@@ -214,12 +212,8 @@ private fun MonthlyCashCard(data: DashboardData, currency: String, balanceVisibl
                 fontSize = 10.sp
             )
         }
-        Text(
-            text = if (balanceVisible) formatCurrency(currency, data.monthIncome - data.monthExpense) else "•••",
-            color = Color.White,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.ExtraBold
-        )
+        AnimatedMaskedAmount(formatCurrency(currency, data.monthIncome - data.monthExpense),
+            balanceVisible, Color.White, 20.sp, FontWeight.ExtraBold)
     }
 }
 
@@ -246,12 +240,8 @@ private fun TodaySpendingCard(data: DashboardData, currency: String, balanceVisi
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        Text(
-            text = if (balanceVisible) formatCurrency(currency, data.todayExpense) else "•••",
-            color = ExpenseRed,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.ExtraBold
-        )
+        AnimatedMaskedAmount(formatCurrency(currency, data.todayExpense), balanceVisible,
+            ExpenseRed, 18.sp, FontWeight.ExtraBold)
     }
 }
 
@@ -265,14 +255,16 @@ private fun IncomeExpenseCards(data: DashboardData, currency: String, balanceVis
     ) {
         StatCard(
             title = "📈 This Month Income",
-            amount = if (balanceVisible) formatCurrency(currency, data.monthIncome) else "•••",
+            amount = formatCurrency(currency, data.monthIncome),
+            visible = balanceVisible,
             amountColor = IncomeGreen,
             borderColor = IncomeGreenBorder,
             modifier = Modifier.weight(1f)
         )
         StatCard(
             title = "📉 This Month Expense",
-            amount = if (balanceVisible) formatCurrency(currency, data.monthExpense) else "•••",
+            amount = formatCurrency(currency, data.monthExpense),
+            visible = balanceVisible,
             amountColor = ExpenseRed,
             borderColor = ExpenseRedBorder,
             modifier = Modifier.weight(1f)
@@ -284,6 +276,7 @@ private fun IncomeExpenseCards(data: DashboardData, currency: String, balanceVis
 private fun StatCard(
     title: String,
     amount: String,
+    visible: Boolean,
     amountColor: Color,
     borderColor: Color,
     modifier: Modifier = Modifier
@@ -303,18 +296,31 @@ private fun StatCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(6.dp))
-            Text(
-                text = amount,
-                color = amountColor,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.ExtraBold
-            )
+            AnimatedMaskedAmount(amount, visible, amountColor, 20.sp, FontWeight.ExtraBold)
         }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(borderColor)
                 .height(3.dp)
+        )
+    }
+}
+
+/** Fade between actual values and four privacy stars when the eye is tapped. */
+@Composable
+private fun AnimatedMaskedAmount(
+    amount: String,
+    visible: Boolean,
+    color: Color,
+    fontSize: TextUnit,
+    fontWeight: FontWeight
+) {
+    Crossfade(targetState = visible, label = "Amount privacy") { reveal ->
+        Text(
+            text = if (reveal) amount else "✦ ✦ ✦ ✦",
+            color = color, fontSize = fontSize, fontWeight = fontWeight,
+            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
         )
     }
 }
