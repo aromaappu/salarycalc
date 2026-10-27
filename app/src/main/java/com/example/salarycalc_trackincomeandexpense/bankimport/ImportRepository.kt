@@ -57,7 +57,8 @@ object ImportRepository {
             val source: String,
             val closingBalance: Double = 0.0,
             val skippedRows: Int = 0,
-            val warnings: List<String> = emptyList()
+            val warnings: List<String> = emptyList(),
+            val possibleDuplicateHashes: Set<String> = emptySet()
         ) : ImportResult()
 
         data class Error(val message: String) : ImportResult()
@@ -132,6 +133,12 @@ object ImportRepository {
         val deduped = DuplicateChecker.dedupe(selection.transactions, db)
         val incompleteRows = coordinateRows.count { it.status != "VALID" }
         val warnings = selection.warnings.toMutableList()
+        if (deduped.duplicateCount > 0) {
+            warnings.add("${deduped.duplicateCount} already-imported transaction(s) skipped.")
+        }
+        if (deduped.possibleDuplicateHashes.isNotEmpty()) {
+            warnings.add("${deduped.possibleDuplicateHashes.size} transactions resemble existing entries and are unchecked by default. Select only if they are separate payments.")
+        }
         if (incompleteRows > 0 && selection.source == "PDF LAYOUT") {
             warnings.add("$incompleteRows PDF table rows could not be interpreted.")
         }
@@ -147,7 +154,8 @@ object ImportRepository {
             source = selection.source,
             closingBalance = closing ?: closingBalance(selection.transactions),
             skippedRows = selection.rejected + if (selection.source == "PDF LAYOUT") incompleteRows else 0,
-            warnings = warnings.distinct()
+            warnings = warnings.distinct(),
+            possibleDuplicateHashes = deduped.possibleDuplicateHashes
         )
     }
 
@@ -181,8 +189,9 @@ object ImportRepository {
         val bank = BankDetector.detect(rawText).displayName
         val validated = TransactionValidator.validate(read.transactions)
         val skipped = read.skippedRows + validated.rejected
-        if (read.needsReview || skipped > 0) {
-            val deduped = DuplicateChecker.dedupe(validated.valid, db)
+        val dedupedCsv = DuplicateChecker.dedupe(validated.valid, db)
+        if (read.needsReview || skipped > 0 || dedupedCsv.possibleDuplicateHashes.isNotEmpty()) {
+            val deduped = dedupedCsv
             return ImportResult.NeedsPreview(
                 transactions = deduped.unique,
                 bank = bank,
@@ -190,7 +199,11 @@ object ImportRepository {
                 source = "CSV",
                 closingBalance = TextCleaner.closingBalance(rawText)
                     ?: closingBalance(read.transactions),
-                skippedRows = skipped
+                skippedRows = skipped,
+                warnings = if (deduped.possibleDuplicateHashes.isNotEmpty())
+                    listOf("${deduped.possibleDuplicateHashes.size} possible duplicates are unchecked. Review before adding.")
+                else emptyList(),
+                possibleDuplicateHashes = deduped.possibleDuplicateHashes
             )
         }
         return finalize(read.transactions, bank, db, "CSV", fileName,
@@ -216,7 +229,14 @@ object ImportRepository {
             } else {
                 rawName.ifEmpty { if (tx.type == "CREDIT") "Credit" else "Expense" }
             }
-            val id = db.addTransactionWithHash(type, tx.amount, name, tx.date, tx.hash, statementId)
+            val reference = BankTransactionMatcher.reference(tx.reference, rawName)
+            val entry = BankTransactionMatcher.Entry(tx.date, type, tx.amount, rawName, reference, "statement")
+            // Recheck after preview: new SMS alerts may have arrived meanwhile.
+            val alreadySaved = db.getPotentialTransactionMatches(type, tx.amount, tx.date).any {
+                BankTransactionMatcher.classify(entry, it) == BankTransactionMatcher.Match.CONFIRMED
+            }
+            if (alreadySaved) continue
+            val id = db.addTransactionWithHash(type, tx.amount, name, tx.date, tx.hash, statementId, reference)
             if (id > 0) {
                 saved++
                 if (type == AppDatabase.TYPE_INCOME) {
@@ -329,7 +349,17 @@ object ImportRepository {
             closingBalance = closing,
             source = source
         )
-        return ImportResult.Ready(deduped.unique, summary)
+        return if (deduped.possibleDuplicateHashes.isNotEmpty()) {
+            ImportResult.NeedsPreview(
+                transactions = deduped.unique,
+                bank = bank,
+                confidence = 0.80f,
+                source = source,
+                closingBalance = closing,
+                warnings = listOf("Possible duplicates require your approval before importing."),
+                possibleDuplicateHashes = deduped.possibleDuplicateHashes
+            )
+        } else ImportResult.Ready(deduped.unique, summary)
     }
 
     /**
