@@ -10,7 +10,12 @@ object DuplicateChecker {
     )
 
     fun dedupe(txs: List<ParsedTransaction>, db: AppDatabase): DedupeResult {
-        val seenHashes = db.getAllTxHashes().toMutableSet()
+        return dedupeAgainstHashes(txs, db.getAllTxHashes())
+    }
+
+    /** Pure form used by unit tests; also catches repeated rows in one upload. */
+    fun dedupeAgainstHashes(txs: List<ParsedTransaction>, hashes: Set<String>): DedupeResult {
+        val seenHashes = hashes.toMutableSet()
         val unique = mutableListOf<ParsedTransaction>()
         var dupes = 0
         for (tx in txs) {
