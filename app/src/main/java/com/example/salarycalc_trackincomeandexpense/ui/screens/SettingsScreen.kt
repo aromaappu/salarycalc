@@ -483,6 +483,17 @@ fun SettingsScreen(
             text = { Text("Are you absolutely sure?") },
             confirmButton = {
                 TextButton(onClick = {
+                    // Remove alarms before deleting their DB rows; otherwise
+                    // reminders from a reset account could still fire.
+                    val alarms = com.example.salarycalc_trackincomeandexpense.NotificationStore.getAll(context)
+                    for (i in 0 until alarms.length()) {
+                        val id = alarms.optJSONObject(i)?.optInt("id", -1) ?: -1
+                        if (id >= 0) {
+                            com.example.salarycalc_trackincomeandexpense.ReminderScheduler.cancel(context, id)
+                        }
+                    }
+                    com.example.salarycalc_trackincomeandexpense.NotificationStore.clearAll(context)
+                    NotificationPreferences.clear(context)
                     db.purgeAll(context)
                     settings.purge(context)
                     onDarkModeChange(false)
