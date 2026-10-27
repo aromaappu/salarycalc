@@ -15,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Switch
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -55,6 +56,7 @@ fun RemindersScreen(
     var amount by remember { mutableStateOf("") }
     var date by remember { mutableStateOf(getTodayStr()) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var repeatMonthly by remember { mutableStateOf(false) }
     var refreshKey by remember { mutableIntStateOf(0) }
     var deleteTarget by remember { mutableStateOf<Long?>(null) }
 
@@ -72,7 +74,7 @@ fun RemindersScreen(
             return
         }
         val selectedDate = date
-        val id = db.addReminder(n, amt, selectedDate)
+        val id = db.addReminder(n, amt, selectedDate, repeatMonthly)
         val message = "$n due today: ${formatCurrency(currency, amt)}"
         ReminderScheduler.schedule(
             context,
@@ -81,12 +83,14 @@ fun RemindersScreen(
             message,
             selectedDate
         )
+        if (repeatMonthly) ReminderScheduler.scheduleNextMonthly(context, id)
         if (selectedDate == getTodayStr()) {
             ReminderScheduler.showInstant(context, id.toInt(), "Bill Reminder", message)
         }
         name = ""
         amount = ""
         date = getTodayStr()
+        repeatMonthly = false
         refreshKey++
         toast("✅ Reminder saved: $n on $selectedDate")
     }
@@ -129,6 +133,21 @@ fun RemindersScreen(
                 Text("📅 $date", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
             }
 
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    if (repeatMonthly) "Repeat every month" else "Only once",
+                    modifier = Modifier.weight(1f),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Switch(checked = repeatMonthly, onCheckedChange = { repeatMonthly = it })
+            }
+
             Spacer(Modifier.height(14.dp))
             Row(
                 modifier = Modifier
@@ -167,7 +186,7 @@ fun RemindersScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "🔔 ${r.name} - ${formatCurrency(currency, r.amount)} (${r.date})",
+                            "🔔 ${r.name} - ${formatCurrency(currency, r.amount)} (${r.date})" + if (r.repeatMonthly) " · Monthly" else " · Once",
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.weight(1f)
