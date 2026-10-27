@@ -34,7 +34,14 @@ object NotificationHelper {
     }
 
     // Builds and shows the actual notification in the system tray
-    fun showNotification(context: Context, id: Int, title: String, message: String) {
+    fun showNotification(
+        context: Context,
+        id: Int,
+        title: String,
+        message: String,
+        kind: NotificationPreferences.Kind = classify(title)
+    ) {
+        if (!NotificationPreferences.isEnabled(context, kind)) return
         createChannel(context)
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -66,6 +73,17 @@ object NotificationHelper {
         manager.notify(id, builder.build())
     }
 
+    private fun classify(title: String): NotificationPreferences.Kind {
+        val t = title.lowercase(java.util.Locale.ROOT)
+        return when {
+            t.startsWith("loan ") -> NotificationPreferences.Kind.LOAN
+            t.startsWith("bill ") -> NotificationPreferences.Kind.BILL
+            t.startsWith("fd ") -> NotificationPreferences.Kind.FD
+            t.startsWith("auto income") || t.startsWith("auto expense") -> NotificationPreferences.Kind.AUTO
+            else -> NotificationPreferences.Kind.TRANSACTION
+        }
+    }
+
     /** Distinguish successful auto-add from a transaction waiting for approval. */
     fun showTransactionNotification(
         context: Context,
@@ -77,6 +95,6 @@ object NotificationHelper {
             else "$kind added successfully"
         val message = "${transaction.merchant.ifEmpty { transaction.category }}: ₹${transaction.amount}"
         val id = (System.currentTimeMillis() and 0x7FFFFFFF).toInt()
-        showNotification(context, id, title, message)
+        showNotification(context, id, title, message, NotificationPreferences.Kind.TRANSACTION)
     }
 }
