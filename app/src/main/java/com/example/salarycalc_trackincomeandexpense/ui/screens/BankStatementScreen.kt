@@ -70,7 +70,8 @@ private sealed class ScreenState {
         val fileName: String,
         val closingBalance: Double = 0.0,
         val skippedRows: Int = 0,
-        val warnings: List<String> = emptyList()
+        val warnings: List<String> = emptyList(),
+        val possibleDuplicateHashes: Set<String> = emptySet()
     ) : ScreenState()
 }
 
@@ -153,7 +154,8 @@ fun BankStatementScreen(
                         fileName = name,
                         closingBalance = result.closingBalance,
                         skippedRows = result.skippedRows,
-                        warnings = result.warnings
+                        warnings = result.warnings,
+                        possibleDuplicateHashes = result.possibleDuplicateHashes
                     )
                 }
 
@@ -365,7 +367,9 @@ private fun PreviewScreen(
     onCancel: () -> Unit
 ) {
     val selected = remember { mutableStateListOf<Boolean>().also { list ->
-        repeat(preview.transactions.size) { list.add(true) }
+        repeat(preview.transactions.size) { index ->
+            list.add(preview.transactions[index].hash !in preview.possibleDuplicateHashes)
+        }
     }}
 
     Column(
@@ -432,6 +436,12 @@ private fun PreviewScreen(
                         )
                         Text("${tx.date}  •  ${tx.reference.take(16)}", fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (tx.hash in preview.possibleDuplicateHashes) {
+                            Text(
+                                "Possible duplicate — unchecked. Verify before adding.",
+                                fontSize = 11.sp, color = Color(0xFFD97706)
+                            )
+                        }
                     }
                     Text(
                         "${if (tx.type == "CREDIT") "+" else "-"}₹${"%.2f".format(tx.amount)}",
@@ -466,7 +476,7 @@ private fun PreviewScreen(
                     .background(Color(0xFF10B981), RoundedCornerShape(8.dp))
                     .clickable {
                         val toImport = preview.transactions.filterIndexed { i, _ -> selected[i] }
-                        onConfirm(toImport)
+                        if (toImport.isNotEmpty()) onConfirm(toImport)
                     }
                     .padding(vertical = 14.dp),
                 contentAlignment = Alignment.Center
