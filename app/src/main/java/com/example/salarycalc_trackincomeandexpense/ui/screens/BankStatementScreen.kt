@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -72,7 +73,8 @@ private sealed class ScreenState {
         val openingBalance: Double? = null,
         val skippedRows: Int = 0,
         val warnings: List<String> = emptyList(),
-        val possibleDuplicateHashes: Set<String> = emptySet()
+        val possibleDuplicateHashes: Set<String> = emptySet(),
+        val summary: ImportRepository.ImportSummary = ImportRepository.ImportSummary()
     ) : ScreenState()
 }
 
@@ -125,11 +127,7 @@ fun BankStatementScreen(
                 is ImportRepository.ImportResult.Ready -> {
                     if (result.transactions.isEmpty()) {
                         screenState = ScreenState.Idle
-                        val msg = buildString {
-                            append("All transactions already imported")
-                            if (result.summary.duplicatesSkipped > 0) append(" (${result.summary.duplicatesSkipped} duplicates skipped)")
-                        }
-                        toast(msg)
+                        importSummary = result.summary.copy(imported = 0, fileName = name)
                         return@launch
                     }
                     val saved = withContext(Dispatchers.IO) {
@@ -144,7 +142,7 @@ fun BankStatementScreen(
                 is ImportRepository.ImportResult.NeedsPreview -> {
                     if (result.transactions.isEmpty()) {
                         screenState = ScreenState.Idle
-                        toast("No valid transactions found after filtering duplicates.")
+                        importSummary = result.summary.copy(imported = 0, fileName = name)
                         return@launch
                     }
                     screenState = ScreenState.Preview(
@@ -157,7 +155,8 @@ fun BankStatementScreen(
                         openingBalance = result.openingBalance,
                         skippedRows = result.skippedRows,
                         warnings = result.warnings,
-                        possibleDuplicateHashes = result.possibleDuplicateHashes
+                        possibleDuplicateHashes = result.possibleDuplicateHashes,
+                        summary = result.summary
                     )
                 }
 
@@ -190,7 +189,12 @@ fun BankStatementScreen(
                     statements = db.getBankStatements()
                     screenState = ScreenState.Idle
                     AutoEvents.refreshTick.intValue++
-                    toast("✅ Saved $saved transactions")
+                    importSummary = preview.summary.copy(
+                        imported = saved,
+                        manuallyExcluded = preview.transactions.size - selected.size,
+                        duplicatesSkipped = preview.summary.duplicatesSkipped + (selected.size - saved),
+                        fileName = preview.fileName
+                    )
                 }
             },
             onCancel = { screenState = ScreenState.Idle }
@@ -318,32 +322,74 @@ fun BankStatementScreen(
         )
     }
 
-    // ── Import Summary ────────────────────────────────────────────────────────
-    importSummary?.let { summary ->
+    // ── Bank import accuracy report — do not represent guesses as verified facts.
+    importSummary?.let { report ->
         AlertDialog(
             onDismissRequest = { importSummary = null },
-            title = { Text("📊 Import Summary") },
+            title = { Text("Bank Import Accuracy Report") },
             text = {
-                Column {
-                    SummaryRow("📄 PDF Uploaded", "✓ ${summary.fileName}")
-                    SummaryRow("📝 TXT Generated", if (summary.txtGenerated) "✓" else "—")
-                    SummaryRow("🔎 Bank Detected", summary.bank)
-                    SummaryRow("🔢 Transactions Found", summary.transactionsFound.toString())
-                    SummaryRow("✅ Imported Successfully", summary.imported.toString())
-                    SummaryRow("🔁 Duplicates Skipped", summary.duplicatesSkipped.toString())
-                    SummaryRow("⚠️ Errors Found", summary.errorsFound.toString())
-                    if (summary.viaOcr) {
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "This was a scanned statement — text was read with OCR.",
-                            fontSize = 12.sp,
-                            color = Color(0xFFF59E0B)
+                Column(
+                    Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Text(report.fileName, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface)
+                    Spacer(Modifier.height(4.dp))
+                    SummaryRow("Bank detected", report.bank)
+                    SummaryRow("Reader", report.source.ifBlank { "Unknown" })
+                    report.pdfPages?.let { SummaryRow("PDF pages checked", it.toString()) }
+                    report.sourceRows?.let { SummaryRow("CSV data rows found", it.toString()) }
+                    SummaryRow("Valid transactions found", report.transactionsFound.toString())
+                    SummaryRow("Actually imported", report.imported.toString())
+                    SummaryRow("Confirmed duplicates skipped", report.duplicatesSkipped.toString())
+                    SummaryRow("Possible duplicates flagged", report.possibleDuplicates.toString())
+                    SummaryRow("Rejected / unreadable rows", report.errorsFound.toString())
+                    if (report.manuallyExcluded > 0) {
+                        SummaryRow("Rows you left unchecked", report.manuallyExcluded.toString())
+                    }
+                    if (report.pdfPages != null) {
+                        SummaryRow(
+                            "Pages needing review",
+                            if (report.pagesToReview.isEmpty()) "None flagged"
+                            else report.pagesToReview.joinToString(", ")
                         )
                     }
+                    SummaryRow("Running balances checked", report.runningBalanceChecks.toString())
+                    SummaryRow("Running balance mismatches", report.runningBalanceMismatches.toString())
+                    SummaryRow("Opening/closing totals",
+                        when (report.totalsMismatch) {
+                            true -> "Mismatch detected"
+                            false -> "Reconciled"
+                            null -> "Not verifiable"
+                        }
+                    )
+                    report.openingBalance?.let {
+                        SummaryRow("Opening balance", "₹${"%.2f".format(it)}")
+                    }
+                    if (report.closingBalanceVerified) {
+                        SummaryRow("Reported closing balance", "₹${"%.2f".format(report.closingBalance)}")
+                    }
+                    if (report.viaOcr) {
+                        Text("Scanned text was processed with OCR; double-check amounts and dates.",
+                            fontSize = 12.sp, color = Color(0xFFD97706))
+                    }
+                    if (report.warnings.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Items to review", fontWeight = FontWeight.Bold, fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurface)
+                        report.warnings.forEach { warning ->
+                            Text("• $warning", fontSize = 12.sp, color = Color(0xFFD97706))
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "A matched balance does not prove that every PDF row was read. Check flagged rows against the original statement.",
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             },
             confirmButton = {
-                TextButton(onClick = { importSummary = null }) { Text("OK") }
+                TextButton(onClick = { importSummary = null }) { Text("Done") }
             }
         )
     }
@@ -410,7 +456,10 @@ private fun PreviewScreen(
             gradient = listOf(Color(0xFFF59E0B), Color(0xFFEF4444))
         )
 
-        Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+        Column(
+            Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                .heightIn(max = 255.dp).verticalScroll(rememberScrollState())
+        ) {
             Text(
                 "Bank: ${preview.bank}  •  Source: ${preview.source}  •  Confidence: ${"%.0f".format(preview.confidence * 100)}%",
                 fontSize = 12.sp,
@@ -421,7 +470,27 @@ private fun PreviewScreen(
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text(
-                "Review every PDF transaction against your statement before importing.",
+                "Found ${preview.summary.transactionsFound} valid • ${preview.summary.duplicatesSkipped} duplicates skipped • ${preview.summary.errorsFound} unreadable",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface
+            )
+            if (preview.summary.pagesToReview.isNotEmpty()) {
+                Text(
+                    "PDF pages to review: ${preview.summary.pagesToReview.joinToString(", ")}",
+                    fontSize = 12.sp, color = Color(0xFFDC2626)
+                )
+            }
+            if (preview.summary.totalsMismatch == true || preview.summary.runningBalanceMismatches > 0) {
+                Text("Balance check: MISMATCH — verify transactions",
+                    fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFDC2626))
+            } else if (preview.summary.totalsMismatch == false) {
+                Text("Opening/closing amounts reconcile (still verify rows)",
+                    fontSize = 12.sp, color = Color(0xFF0D9488))
+            } else {
+                Text("Opening/closing check not available for this statement",
+                    fontSize = 12.sp, color = Color(0xFFD97706))
+            }
+            Text(
+                "Review every imported transaction against your statement before importing.",
                 fontSize = 12.sp,
                 color = Color(0xFFF59E0B)
             )
