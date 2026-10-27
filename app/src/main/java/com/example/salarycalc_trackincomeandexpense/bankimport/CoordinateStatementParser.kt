@@ -49,9 +49,10 @@ class CoordinateStatementParser {
         val corrected = chronological.map { row ->
             val amount = row.debit ?: row.credit
             val current = row.balance
+            val prior = previous
             var result = row
-            if (previous != null && current != null && amount != null && amount.signum() > 0) {
-                val change = current.subtract(previous)
+            if (prior != null && current != null && amount != null && amount.signum() > 0) {
+                val change = current.subtract(prior)
                 if (change.abs().subtract(amount).abs() <= BigDecimal("0.01")) {
                     // A consistent running balance is stronger evidence than
                     // keywords like "payment", "transfer" or default debit.
