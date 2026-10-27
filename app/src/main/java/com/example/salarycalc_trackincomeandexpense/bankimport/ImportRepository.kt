@@ -39,7 +39,18 @@ object ImportRepository {
         val duplicatesSkipped: Int = 0,
         val errorsFound: Int = 0,
         val closingBalance: Double = 0.0,
-        val source: String = ""
+        val source: String = "",
+        val sourceRows: Int? = null,
+        val pdfPages: Int? = null,
+        val pagesToReview: List<Int> = emptyList(),
+        val openingBalance: Double? = null,
+        val closingBalanceVerified: Boolean = false,
+        val runningBalanceChecks: Int = 0,
+        val runningBalanceMismatches: Int = 0,
+        val totalsMismatch: Boolean? = null,
+        val possibleDuplicates: Int = 0,
+        val manuallyExcluded: Int = 0,
+        val warnings: List<String> = emptyList()
     )
 
     sealed class ImportResult {
@@ -59,7 +70,8 @@ object ImportRepository {
             val openingBalance: Double? = null,
             val skippedRows: Int = 0,
             val warnings: List<String> = emptyList(),
-            val possibleDuplicateHashes: Set<String> = emptySet()
+            val possibleDuplicateHashes: Set<String> = emptySet(),
+            val summary: ImportSummary = ImportSummary()
         ) : ImportResult()
 
         data class Error(val message: String) : ImportResult()
@@ -138,6 +150,7 @@ object ImportRepository {
         val coverage = PdfCoverageAuditor.check(
             (extract as PdfReader.Result.Success).pages, selection.transactions
         )
+        val audit = PdfStatementAudit.check(selection.transactions, opening, closing)
         warnings.addAll(coverage.warnings)
         if (opening == null || closing == null) {
             warnings.add("Statement does not provide both opening and closing balances; completeness cannot be proven.")
@@ -156,16 +169,39 @@ object ImportRepository {
         }
         // Bank PDFs never auto-save: missing rows and bank-specific layouts
         // cannot be proven correct by parser confidence alone.
+        val skipped = selection.rejected +
+            if (selection.source == "PDF LAYOUT") incompleteRows else 0
+        val verified = opening != null && closing != null
+        val report = ImportSummary(
+            fileName = fileName,
+            bank = bank.displayName,
+            viaOcr = (extract as PdfReader.Result.Success).viaOcr,
+            transactionsFound = selection.transactions.size,
+            duplicatesSkipped = deduped.duplicateCount,
+            errorsFound = skipped,
+            closingBalance = closing ?: closingBalance(selection.transactions),
+            source = selection.source,
+            pdfPages = coverage.pageCount,
+            pagesToReview = coverage.pagesToReview,
+            openingBalance = opening,
+            closingBalanceVerified = verified,
+            runningBalanceChecks = audit.checkedBalances,
+            runningBalanceMismatches = audit.inconsistentBalances,
+            totalsMismatch = if (verified) audit.totalsMismatch else null,
+            possibleDuplicates = deduped.possibleDuplicateHashes.size,
+            warnings = warnings.distinct()
+        )
         return ImportResult.NeedsPreview(
             transactions = deduped.unique,
-            bank = bank.displayName,
+            bank = report.bank,
             confidence = selection.confidence,
-            source = selection.source,
-            closingBalance = closing ?: closingBalance(selection.transactions),
+            source = report.source,
+            closingBalance = report.closingBalance,
             openingBalance = opening,
-            skippedRows = selection.rejected + if (selection.source == "PDF LAYOUT") incompleteRows else 0,
-            warnings = warnings.distinct(),
-            possibleDuplicateHashes = deduped.possibleDuplicateHashes
+            skippedRows = skipped,
+            warnings = report.warnings,
+            possibleDuplicateHashes = deduped.possibleDuplicateHashes,
+            summary = report
         )
     }
 
@@ -200,6 +236,28 @@ object ImportRepository {
         val validated = TransactionValidator.validate(read.transactions)
         val skipped = read.skippedRows + validated.rejected
         val dedupedCsv = DuplicateChecker.dedupe(validated.valid, db)
+        val csvSummary = ImportSummary(
+            fileName = fileName,
+            bank = bank,
+            viaOcr = false,
+            txtGenerated = false,
+            transactionsFound = validated.valid.size,
+            duplicatesSkipped = dedupedCsv.duplicateCount,
+            errorsFound = skipped,
+            sourceRows = read.dataRows,
+            source = "CSV",
+            openingBalance = TextCleaner.openingBalance(rawText),
+            closingBalance = TextCleaner.closingBalance(rawText)
+                ?: closingBalance(read.transactions),
+            closingBalanceVerified = TextCleaner.closingBalance(rawText) != null,
+            possibleDuplicates = dedupedCsv.possibleDuplicateHashes.size,
+            warnings = buildList {
+                if (skipped > 0) add("$skipped CSV rows could not be validated.")
+                if (read.needsReview) add("CSV headings or transaction directions require review.")
+                if (dedupedCsv.possibleDuplicateHashes.isNotEmpty())
+                    add("Similar transactions are unchecked by default. Review before importing.")
+            }
+        )
         if (read.needsReview || skipped > 0 || dedupedCsv.possibleDuplicateHashes.isNotEmpty()) {
             val deduped = dedupedCsv
             return ImportResult.NeedsPreview(
@@ -210,14 +268,18 @@ object ImportRepository {
                 closingBalance = TextCleaner.closingBalance(rawText)
                     ?: closingBalance(read.transactions),
                 skippedRows = skipped,
-                warnings = if (deduped.possibleDuplicateHashes.isNotEmpty())
-                    listOf("${deduped.possibleDuplicateHashes.size} possible duplicates are unchecked. Review before adding.")
-                else emptyList(),
-                possibleDuplicateHashes = deduped.possibleDuplicateHashes
+                warnings = csvSummary.warnings,
+                possibleDuplicateHashes = deduped.possibleDuplicateHashes,
+                summary = csvSummary
             )
         }
-        return finalize(read.transactions, bank, db, "CSV", fileName,
+        val result = finalize(read.transactions, bank, db, "CSV", fileName,
             viaOcr = false, closingOverride = TextCleaner.closingBalance(rawText))
+        return when (result) {
+            is ImportResult.Ready -> result.copy(summary = csvSummary)
+            is ImportResult.NeedsPreview -> result.copy(summary = csvSummary)
+            is ImportResult.Error -> result
+        }
     }
 
     /**
