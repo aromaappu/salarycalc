@@ -21,10 +21,13 @@ object PaymentNotificationParser {
 
     fun parse(message: String, trustedPaymentApp: Boolean = false, title: String = ""): Payment? {
         val text = message.replace('\u00a0', ' ').replace(Regex("\\s+"), " ").trim()
-        if (text.isEmpty() || otp.containsMatchIn(text) || failure.containsMatchIn(text)) return null
+        if (text.isEmpty()) return null
+        val isRefund = Regex("\\b(?:refund(?:ed)?|reversal|reversed)\\b", RegexOption.IGNORE_CASE).containsMatchIn(text)
+        // A refund can legitimately mention the failed payment it reverses.
+        if (otp.containsMatchIn(text) || (!isRefund && failure.containsMatchIn(text))) return null
         // A payment-app title may carry the direction while its body carries the name/amount.
         val combined = if (trustedPaymentApp && title.isNotBlank()) "$title. $text" else text
-        if (failure.containsMatchIn(combined)) return null
+        if (otp.containsMatchIn(combined) || (!isRefund && failure.containsMatchIn(combined))) return null
         val sentToYou = Regex("\\b(?:sent|paid|transferred)\\s+(?:you|to\\s+you)\\b", RegexOption.IGNORE_CASE).containsMatchIn(combined)
         val isCredit = credit.containsMatchIn(combined) || sentToYou
         val debitText = combined.replace(Regex("\\b(?:sent|paid|transferred)\\s+(?:you|to\\s+you)\\b", RegexOption.IGNORE_CASE), " ")
