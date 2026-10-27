@@ -236,7 +236,8 @@ object ImportRepository {
             bank = bank.displayName,
             confidence = confidence,
             source = source,
-            closingBalance = closingOverride ?: closingBalance(deduped.unique)
+            closingBalance = closingOverride ?: closingBalance(deduped.unique),
+            skippedRows = validated.rejected
         )
     }
 
