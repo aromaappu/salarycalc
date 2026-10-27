@@ -1,12 +1,14 @@
 package com.example.salarycalc_trackincomeandexpense.data
 
 import java.util.Calendar
+import android.content.Context
+import com.example.salarycalc_trackincomeandexpense.NotificationHelper
 
 // Port of applyAutoEntries() from core.js — adds due Auto Income/Expense
 // transactions once per month when the scheduled day matches today.
 object AutoEntries {
 
-    fun applyDue(db: AppDatabase, settings: SettingsStore) {
+    fun applyDue(db: AppDatabase, settings: SettingsStore, context: Context? = null) {
         val now = Calendar.getInstance()
         val year = now.get(Calendar.YEAR)
         val month = now.get(Calendar.MONTH)
@@ -19,16 +21,20 @@ object AutoEntries {
             val amount = entry.amount
             val scheduledDay = entry.dayOfMonth.coerceIn(1, daysInMonth)
             if (source.isBlank() || amount <= 0) return@forEach
-            if (today != scheduledDay) return@forEach
+            if (today < scheduledDay) return@forEach
 
             val deleteKey = "${source}_$monthKey"
             if (settings.getDeletedAutoIncomeMonths().contains(deleteKey)) return@forEach
             if (isAddedForMonth(db, AppDatabase.TYPE_INCOME, source, monthKey)) return@forEach
 
             if (!db.getIncomeSources().contains(source)) db.addIncomeSource(source)
-            db.addTransaction(
+            val inserted = db.addTransaction(
                 AppDatabase.TYPE_INCOME, amount, source, makeDateStr(year, month, scheduledDay)
             )
+            if (inserted > 0) context?.let {
+                NotificationHelper.showNotification(it, (System.nanoTime() and 0x7FFFFFFF).toInt(),
+                    "Auto income added", "$source: ₹$amount")
+            }
         }
 
         db.getAutoExpenses().forEach { entry ->
@@ -36,16 +42,20 @@ object AutoEntries {
             val amount = entry.amount
             val scheduledDay = entry.dayOfMonth.coerceIn(1, daysInMonth)
             if (category.isBlank() || amount <= 0) return@forEach
-            if (today != scheduledDay) return@forEach
+            if (today < scheduledDay) return@forEach
 
             val deleteKey = "${category}_$monthKey"
             if (settings.getDeletedAutoExpenseMonths().contains(deleteKey)) return@forEach
             if (isAddedForMonth(db, AppDatabase.TYPE_EXPENSE, category, monthKey)) return@forEach
 
             if (!db.getExpenseCategories().contains(category)) db.addExpenseCategory(category)
-            db.addTransaction(
+            val inserted = db.addTransaction(
                 AppDatabase.TYPE_EXPENSE, amount, category, makeDateStr(year, month, scheduledDay)
             )
+            if (inserted > 0) context?.let {
+                NotificationHelper.showNotification(it, (System.nanoTime() and 0x7FFFFFFF).toInt(),
+                    "Auto expense added", "$category: ₹$amount")
+            }
         }
     }
 
