@@ -118,11 +118,15 @@ object ImportRepository {
         apiKey: String,
         fileName: String = "statement"
     ): ImportResult {
-        val rawText = try {
-            stream.bufferedReader(Charsets.UTF_8).readText()
+        val bytes = try {
+            stream.use { it.readBytes() }
         } catch (e: Exception) {
             return ImportResult.Error("Could not read CSV: ${e.message}")
         }
+        if (bytes.size > MAX_IMPORT_BYTES) {
+            return ImportResult.Error("File is too large. Maximum size is 30 MB.")
+        }
+        val rawText = CsvReader.decode(bytes)
 
         val read = try {
             CsvReader.readDetailed(rawText.byteInputStream(Charsets.UTF_8))
