@@ -15,8 +15,8 @@ android {
         applicationId = "com.example.salarycalc_trackincomeandexpense"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "2.0.0"
+        versionCode = 16
+        versionName = "2.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -84,6 +84,7 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation("androidx.compose.animation:animation")
 
     // PDF bank statement parsing (pdfbox-android)
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
