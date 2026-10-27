@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import com.example.salarycalc_trackincomeandexpense.data.AppDatabase
+import com.example.salarycalc_trackincomeandexpense.bankimport.BankTransactionMatcher
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.regex.Pattern
@@ -749,8 +750,21 @@ class SmsReceiver : BroadcastReceiver() {
 
     private fun handleTransaction(context: Context, prefs: SharedPreferences, transaction: TransactionData) {
         val confirmationEnabled = prefs.getBoolean(KEY_CONFIRMATION_ENABLED, false)
-
-        if (confirmationEnabled) {
+        val type = if (transaction.transactionType == "credit") AppDatabase.TYPE_INCOME else AppDatabase.TYPE_EXPENSE
+        val name = transaction.merchant.ifEmpty { transaction.category }
+        val db = AppDatabase(context)
+        val entry = BankTransactionMatcher.Entry(transaction.date, type, transaction.amount, name, transaction.referenceNumber, "sms")
+        val matches = try {
+            db.getPotentialTransactionMatches(type, transaction.amount, transaction.date)
+                .map { BankTransactionMatcher.classify(entry, it) }
+        } finally {
+            db.close()
+        }
+        if (matches.contains(BankTransactionMatcher.Match.CONFIRMED)) return
+        // An unreferenced notification that resembles an imported bank row
+        // needs confirmation; it must not silently create another transaction.
+        val possible = matches.contains(BankTransactionMatcher.Match.POSSIBLE)
+        if (confirmationEnabled || possible) {
             // Store as pending — confirmation popup will show in app
             val pending = getPendingTransactions(prefs).toMutableList()
             // Skip if an identical transaction is already waiting
@@ -788,34 +802,28 @@ class SmsReceiver : BroadcastReceiver() {
     }
 
     private fun autoSaveTransaction(context: Context, transaction: TransactionData): Boolean {
-        // Write straight into the database so the transaction is added
-        // immediately (no app restart or broadcast listener needed).
-        val txType = if (transaction.transactionType == "credit") "income" else "expense"
-        val txName = transaction.merchant.ifEmpty { transaction.category }
+        val type = if (transaction.transactionType == "credit") AppDatabase.TYPE_INCOME else AppDatabase.TYPE_EXPENSE
+        val name = transaction.merchant.ifEmpty { transaction.category }
         val date = transaction.date.ifBlank {
             SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(java.util.Date())
         }
         val db = AppDatabase(context)
-        // Skip if an identical transaction already exists — guards against the
-        // same notification being re-posted by the phone (e.g. re-delivered SMS).
-        val exists = db.getTransactions(type = txType).any {
-            it.amount == transaction.amount &&
-                it.name.equals(txName, ignoreCase = true) &&
-                it.date == date
+        try {
+            val entry = BankTransactionMatcher.Entry(date, type, transaction.amount, name, transaction.referenceNumber, "sms")
+            if (db.getPotentialTransactionMatches(type, transaction.amount, date).any {
+                BankTransactionMatcher.classify(entry, it) == BankTransactionMatcher.Match.CONFIRMED
+            }) return false
+            val id = db.addAutoDetectedTransaction(type, transaction.amount, name, date, transaction.referenceNumber)
+            if (id <= 0) return false
+            if (type == AppDatabase.TYPE_INCOME) {
+                if (!db.getIncomeSources().contains(name)) db.addIncomeSource(name)
+            } else {
+                if (!db.getExpenseCategories().contains(name)) db.addExpenseCategory(name)
+            }
+            return true
+        } finally {
+            db.close()
         }
-        if (exists) return false
-
-        if (txType == AppDatabase.TYPE_INCOME) {
-            if (!db.getIncomeSources().contains(txName)) db.addIncomeSource(txName)
-        } else {
-            if (!db.getExpenseCategories().contains(txName)) db.addExpenseCategory(txName)
-        }
-        return db.addTransaction(
-            type = txType,
-            amount = transaction.amount,
-            name = txName,
-            date = date
-        ) > 0
     }
 
     private fun getPendingTransactions(prefs: SharedPreferences): List<TransactionData> {
