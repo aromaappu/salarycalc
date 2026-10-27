@@ -24,15 +24,15 @@ object BankTransactionMatcher {
     )
 
     fun reference(raw: String, narration: String = ""): String {
-        fun candidate(text: String): String =
+        fun labelled(text: String): String =
             embeddedReference.find(text)?.groupValues?.get(1)
-                ?: labelledReference.find(text)?.groupValues?.get(1)
-                ?: text.trim()
+                ?: labelledReference.find(text)?.groupValues?.get(1).orEmpty()
 
-        val initial = candidate(raw).uppercase(Locale.ROOT)
-            .replace(Regex("[^A-Z0-9]"), "")
+        val initial = (labelled(raw).ifEmpty { raw.trim() })
+            .uppercase(Locale.ROOT).replace(Regex("[^A-Z0-9]"), "")
+        // Free-form narration numbers are NOT UTRs unless tagged as such.
         val value = if (initial.length in 10..25 && initial.count { it.isDigit() } >= 8) initial
-            else candidate(narration).uppercase(Locale.ROOT).replace(Regex("[^A-Z0-9]"), "")
+            else labelled(narration).uppercase(Locale.ROOT).replace(Regex("[^A-Z0-9]"), "")
         return if (value.length in 10..25 && value.count { it.isDigit() } >= 8 &&
             value.toSet().size > 1
         ) value else ""
