@@ -53,6 +53,27 @@ object ReminderScheduler {
         NotificationStore.remove(context, id)
     }
 
+    /**
+     * Schedules the next occurrence using the original chosen day-of-month.
+     * Jan 31 -> Feb 28/29 -> Mar 31, never drifting permanently to the 28th.
+     */
+    fun scheduleNextMonthly(context: Context, reminderId: Long) {
+        val reminder = com.example.salarycalc_trackincomeandexpense.data.AppDatabase(context)
+            .getReminder(reminderId) ?: return
+        if (!reminder.repeatMonthly) return
+        val first = runCatching { java.time.LocalDate.parse(reminder.date) }.getOrNull() ?: return
+        val today = java.time.LocalDate.now()
+        var month = java.time.YearMonth.from(first)
+        var candidate = first
+        while (!candidate.isAfter(today) && !(candidate == today &&
+                Calendar.getInstance().get(Calendar.HOUR_OF_DAY) < REMINDER_HOUR)) {
+            month = month.plusMonths(1)
+            candidate = month.atDay(first.dayOfMonth.coerceAtMost(month.lengthOfMonth()))
+        }
+        schedule(context, reminderId.toInt(), "Bill Reminder",
+            "${reminder.name} due: ₹${reminder.amount}", candidate.toString())
+    }
+
     // Shows an instant notification when a reminder is due today (matches original addReminder())
     fun showInstant(context: Context, id: Int, title: String, message: String) {
         NotificationHelper.showNotification(context, id, title, message)
