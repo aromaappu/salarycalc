@@ -52,6 +52,6 @@ object PdfCandidateSelector {
     private fun signature(txs: List<ParsedTransaction>): Map<String, Int> =
         txs.groupingBy { tx ->
             val amount = String.format(Locale.US, "%.2f", tx.amount)
-            "\${tx.date}|\$amount|\${tx.type}"
+            "${tx.date}|$amount|${tx.type}"
         }.eachCount()
 }
