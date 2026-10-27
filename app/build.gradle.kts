@@ -29,20 +29,14 @@ android {
                     f.inputStream().use { load(it) }
                 }
             }
-            storeFile = file(props.getProperty("storeFile", "keystore.jks"))
-            storePassword = props.getProperty("storePassword", "REDACTED")
-            keyAlias = props.getProperty("keyAlias", "key0")
-            keyPassword = props.getProperty("keyPassword", "REDACTED")
+            storeFile = props.getProperty("storeFile")?.let { file(it) }
+            storePassword = props.getProperty("storePassword")
+            keyAlias = props.getProperty("keyAlias")
+            keyPassword = props.getProperty("keyPassword")
         }
     }
 
     buildTypes {
-        debug {
-            // Sign debug builds with the release keystore so running from
-            // Android Studio installs over the existing app (no uninstall /
-            // data loss when the device already has the signed APK).
-            signingConfig = signingConfigs.getByName("release")
-        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
