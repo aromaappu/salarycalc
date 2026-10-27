@@ -86,6 +86,7 @@ class MainActivity : ComponentActivity() {
         AutoEntries.applyDue(db, settings, this)
         com.example.salarycalc_trackincomeandexpense.data.LoanScheduler.reconcileAll(this, db)
         DailyFinanceWorker.ensureScheduled(this)
+        ReminderScheduler.reconcileMonthly(this)
 
         // Import any transactions queued while the app was closed (reminder
         // payments / SMS auto-save) so they actually reach the database.
