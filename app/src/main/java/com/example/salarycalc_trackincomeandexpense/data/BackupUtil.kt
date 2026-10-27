@@ -60,6 +60,7 @@ object BackupUtil {
             o.put("name", r.name)
             o.put("amount", r.amount)
             o.put("date", r.date)
+            o.put("repeatMonthly", r.repeatMonthly)
             remArray.put(o)
         }
         root.put("reminders", remArray)
@@ -235,7 +236,17 @@ object BackupUtil {
             db.addAutoExpense(o.optString("category"), o.optDouble("amount", 0.0), o.optInt("day", 1))
         }
         data.optJSONArray("reminders")?.forEachJson { o ->
-            db.addReminder(o.optString("name"), o.optDouble("amount", 0.0), o.optString("date"))
+            val name = o.optString("name")
+            val amount = o.optDouble("amount", 0.0)
+            val date = o.optString("date")
+            val monthly = o.optBoolean("repeatMonthly", false)
+            val id = db.addReminder(name, amount, date, monthly)
+            if (id > 0) {
+                com.example.salarycalc_trackincomeandexpense.ReminderScheduler.schedule(
+                    context, id.toInt(), "Bill Reminder", "$name due: ₹$amount", date
+                )
+                if (monthly) com.example.salarycalc_trackincomeandexpense.ReminderScheduler.scheduleNextMonthly(context, id)
+            }
         }
 
         data.optJSONArray("loans")?.forEachJson { o ->
