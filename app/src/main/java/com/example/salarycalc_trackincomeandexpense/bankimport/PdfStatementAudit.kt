@@ -61,7 +61,8 @@ object PdfStatementAudit {
             warnings.add("This PDF has no balance evidence to verify missing transactions.")
         }
         return Result(
-            reconciled = mismatches == 0 && !totalsMismatch,
+            reconciled = (comparisons > 0 || (openingBalance != null && closingBalance != null)) &&
+                mismatches == 0 && !totalsMismatch,
             checkedBalances = comparisons,
             inconsistentBalances = mismatches,
             totalsMismatch = totalsMismatch,
