@@ -24,11 +24,18 @@ object BankTransactionMatcher {
     )
 
     fun reference(raw: String, narration: String = ""): String {
-        val value = raw.trim().ifEmpty {
-            embeddedReference.find(narration)?.groupValues?.get(1)
-                ?: labelledReference.find(narration)?.groupValues?.get(1).orEmpty()
-        }.uppercase(Locale.ROOT).replace(Regex("[^A-Z0-9]"), "")
-        return if (value.length in 10..25 && value.count { it.isDigit() } >= 8) value else ""
+        fun candidate(text: String): String =
+            embeddedReference.find(text)?.groupValues?.get(1)
+                ?: labelledReference.find(text)?.groupValues?.get(1)
+                ?: text.trim()
+
+        val initial = candidate(raw).uppercase(Locale.ROOT)
+            .replace(Regex("[^A-Z0-9]"), "")
+        val value = if (initial.length in 10..25 && initial.count { it.isDigit() } >= 8) initial
+            else candidate(narration).uppercase(Locale.ROOT).replace(Regex("[^A-Z0-9]"), "")
+        return if (value.length in 10..25 && value.count { it.isDigit() } >= 8 &&
+            value.toSet().size > 1
+        ) value else ""
     }
 
     fun strongKey(entry: Entry): String? {
