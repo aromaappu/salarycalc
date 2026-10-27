@@ -1,97 +1,177 @@
 package com.example.salarycalc_trackincomeandexpense.bankimport
 
 import java.io.InputStream
+import java.util.Locale
+import kotlin.math.abs
 
 object CsvReader {
 
-    fun read(stream: InputStream): List<ParsedTransaction> {
-        val lines = stream.bufferedReader(Charsets.UTF_8).readLines()
-            .map { it.trim() }.filter { it.isNotBlank() }
-        if (lines.size < 2) return emptyList()
+    data class ReadResult(
+        val transactions: List<ParsedTransaction>,
+        val dataRows: Int,
+        val skippedRows: Int,
+        val needsReview: Boolean
+    )
 
-        val header = splitCsv(lines[0]).map { it.lowercase().trim() }
-        val cols = detectColumns(header)
+    fun read(stream: InputStream): List<ParsedTransaction> = readDetailed(stream).transactions
 
+    /**
+     * Bank CSV files are not all in the app's export format. Read the header
+     * by column meaning, handle quoted commas/newlines, and report rejected
+     * rows rather than silently claiming they were imported.
+     */
+    fun readDetailed(stream: InputStream): ReadResult {
+        val content = stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            .removePrefix("\uFEFF")
+        val records = parseRecords(content)
+        if (records.isEmpty()) return ReadResult(emptyList(), 0, 0, false)
+
+        val headerIndex = records.indexOfFirst { row ->
+            val columns = detectColumns(row)
+            columns.containsKey("date") &&
+                (columns.containsKey("debit") || columns.containsKey("credit") || columns.containsKey("amount"))
+        }
+        if (headerIndex < 0) return ReadResult(emptyList(), 0, 0, false)
+        val cols = detectColumns(records[headerIndex])
+        var skipped = 0
+        var dataRows = 0
+        var needsReview = !cols.containsKey("desc")
         val result = mutableListOf<ParsedTransaction>()
-        for (i in 1 until lines.size) {
-            val cells = splitCsv(lines[i])
-            if (cells.size <= (cols.values.maxOrNull() ?: 0)) continue
 
-            val rawDate = cols["date"]?.let { cells.getOrNull(it) } ?: continue
-            val date = StatementNormalizer.normalizeDate(rawDate) ?: continue
+        for (row in records.drop(headerIndex + 1)) {
+            if (row.all { it.isBlank() }) continue
+            if (row.any { it.contains("closing balance", true) || it.contains("opening balance", true) } &&
+                row.none { StatementNormalizer.normalizeDate(it.trim()) != null }) continue
 
-            val rawDesc = cols["desc"]?.let { cells.getOrNull(it) }?.trim() ?: ""
-            val description = StatementNormalizer.normalizeDescription(rawDesc)
-
-            val debitVal  = cols["debit"]?.let  { StatementNormalizer.normalizeAmount(cells.getOrNull(it) ?: "") } ?: 0.0
-            val creditVal = cols["credit"]?.let { StatementNormalizer.normalizeAmount(cells.getOrNull(it) ?: "") } ?: 0.0
-            val amountCol = cols["amount"]?.let { StatementNormalizer.normalizeAmount(cells.getOrNull(it) ?: "") }
-
-            val (amount, type) = when {
-                amountCol != null && amountCol != 0.0 -> {
-                    val rawType = cols["type"]?.let { cells.getOrNull(it) } ?: ""
-                    val normalizedType = StatementNormalizer.normalizeType(rawType)
-                    val value = kotlin.math.abs(amountCol)
-                    when {
-                        normalizedType != null -> value to normalizedType
-                        amountCol < 0 -> value to "DEBIT"
-                        else -> value to "CREDIT"
-                    }
+            val rawDate = row.getOrNull(cols.getValue("date"))?.trim().orEmpty()
+            // Ignore repeated table headers and statement footers.
+            if (rawDate.equals("date", true) || rawDate.contains("transaction date", true)) continue
+            val date = StatementNormalizer.normalizeDate(rawDate)
+                ?: StatementNormalizer.normalizeDate(rawDate.substringBefore(' '))
+            if (date == null) {
+                // The first column can also contain statement footer text.
+                if (rawDate.isNotBlank() && rawDate.any { it.isDigit() }) {
+                    dataRows++
+                    skipped++
                 }
-                creditVal > 0 && debitVal == 0.0 -> creditVal to "CREDIT"
-                debitVal  > 0 && creditVal == 0.0 -> debitVal  to "DEBIT"
-                creditVal > 0 -> creditVal to "CREDIT"
-                debitVal  > 0 -> debitVal  to "DEBIT"
-                else -> continue
+                continue
             }
+            dataRows++
 
-            val balance = cols["balance"]?.let { StatementNormalizer.normalizeAmount(cells.getOrNull(it) ?: "") } ?: 0.0
-            val reference = cols["ref"]?.let { cells.getOrNull(it)?.trim() } ?: ""
+            val rawDesc = cols["desc"]?.let { row.getOrNull(it) }.orEmpty().orEmpty()
+            val description = StatementNormalizer.normalizeDescription(rawDesc)
+            val debitRaw = cols["debit"]?.let { row.getOrNull(it) }.orEmpty().orEmpty()
+            val creditRaw = cols["credit"]?.let { row.getOrNull(it) }.orEmpty().orEmpty()
+            val debit = abs(StatementNormalizer.normalizeAmount(debitRaw) ?: 0.0)
+            val credit = abs(StatementNormalizer.normalizeAmount(creditRaw) ?: 0.0)
+            val amountRaw = cols["amount"]?.let { row.getOrNull(it) }.orEmpty().orEmpty()
+            val amountValue = StatementNormalizer.normalizeAmount(amountRaw)
+            val typeValue = cols["type"]?.let { row.getOrNull(it) }.orEmpty().orEmpty()
+            val explicitType = StatementNormalizer.normalizeType(typeValue)
+                ?: when {
+                    Regex("(?i)\\bDR\\b").containsMatchIn(amountRaw) -> "DEBIT"
+                    Regex("(?i)\\bCR\\b").containsMatchIn(amountRaw) -> "CREDIT"
+                    else -> null
+                }
 
-            val hash = HashGenerator.generate(date, amount, description, reference)
-            result.add(ParsedTransaction(date, description, amount, type, balance, reference, hash, confidence = 0.97f))
+            val resolved = when {
+                debit > 0.0 && credit > 0.0 -> null // contradictory columns
+                debit > 0.0 -> debit to "DEBIT"
+                credit > 0.0 -> credit to "CREDIT"
+                amountValue != null && amountValue != 0.0 -> {
+                    val inferred = explicitType ?: if (amountValue < 0) "DEBIT" else "CREDIT"
+                    if (explicitType == null && amountValue > 0) needsReview = true
+                    abs(amountValue) to inferred
+                }
+                else -> null
+            }
+            if (resolved == null || !resolved.first.isFinite() || resolved.first <= 0) {
+                skipped++
+                continue
+            }
+            val balance = cols["balance"]?.let { row.getOrNull(it) }
+                ?.let { StatementNormalizer.normalizeAmount(it) } ?: 0.0
+            val reference = cols["ref"]?.let { row.getOrNull(it) }?.trim().orEmpty()
+            val hash = HashGenerator.generate(date, resolved.first, description, reference)
+            result.add(ParsedTransaction(
+                date, description, resolved.first, resolved.second,
+                balance, reference, hash,
+                confidence = if (needsReview) 0.75f else 0.97f
+            ))
         }
-        return result
+        return ReadResult(result, dataRows, skipped, needsReview)
     }
 
-    // Maps logical column names to their index in the header row
     private fun detectColumns(header: List<String>): Map<String, Int> {
-        val map = mutableMapOf<String, Int>()
-        header.forEachIndexed { i, h ->
+        val result = mutableMapOf<String, Int>()
+        var fallbackDate: Int? = null
+        header.forEachIndexed { index, heading ->
+            val h = heading.trim().lowercase(Locale.US).replace(Regex("\\s+"), " ")
+            if (h.contains("date") && fallbackDate == null) fallbackDate = index
             when {
-                h.contains("date") || h.contains("txn date") || h.contains("value date") ->
-                    if (!map.containsKey("date")) map["date"] = i
-                h.contains("narration") || h.contains("description") || h.contains("particulars") || h.contains("remarks") ->
-                    if (!map.containsKey("desc")) map["desc"] = i
-                (h.contains("debit") || h.contains("withdrawal") || h.contains("dr")) && !h.contains("credit") ->
-                    if (!map.containsKey("debit")) map["debit"] = i
-                (h.contains("credit") || h.contains("deposit") || h.contains("cr")) && !h.contains("debit") ->
-                    if (!map.containsKey("credit")) map["credit"] = i
-                h.contains("amount") && !h.contains("debit") && !h.contains("credit") ->
-                    if (!map.containsKey("amount")) map["amount"] = i
-                h.contains("balance") || h.contains("bal") ->
-                    if (!map.containsKey("balance")) map["balance"] = i
-                h.contains("ref") || h.contains("chq") || h.contains("cheque") || h.contains("utr") ->
-                    if (!map.containsKey("ref")) map["ref"] = i
-                h.contains("type") || h.contains("cr/dr") || h.contains("dr/cr") ->
-                    if (!map.containsKey("type")) map["type"] = i
+                h.contains("date") && !h.contains("value date") ->
+                    result.putIfAbsent("date", index)
+                h.contains("narration") || h.contains("description") ||
+                    h.contains("particular") || h.contains("remark") ||
+                    h.contains("details") || h.contains("payee") ->
+                    result.putIfAbsent("desc", index)
+                h.contains("dr/cr") || h.contains("cr/dr") || h.contains("dr cr") ||
+                    h.contains("cr dr") || h == "type" || h.contains("transaction type") ->
+                    result.putIfAbsent("type", index)
+                h.contains("balance") || h == "bal" || h.contains("running bal") ->
+                    result.putIfAbsent("balance", index)
+                h.contains("debit") || h.contains("withdrawal") ||
+                    h == "dr" || h.contains("paid out") ->
+                    result.putIfAbsent("debit", index)
+                h.contains("credit") || h.contains("deposit") ||
+                    h == "cr" || h.contains("paid in") ->
+                    result.putIfAbsent("credit", index)
+                h.contains("amount") || h == "amt" ->
+                    result.putIfAbsent("amount", index)
+                h.contains("reference") || h.contains("ref no") || h == "ref" ||
+                    h.contains("cheque") || h.contains("chq") || h.contains("utr") ->
+                    result.putIfAbsent("ref", index)
             }
         }
-        return map
+        if (!result.containsKey("date") && fallbackDate != null) result["date"] = fallbackDate!!
+        return result
     }
 
-    private fun splitCsv(line: String): List<String> {
-        val result = mutableListOf<String>()
-        val sb = StringBuilder()
-        var inQuotes = false
-        for (ch in line) {
-            when {
-                ch == '"' -> inQuotes = !inQuotes
-                ch == ',' && !inQuotes -> { result.add(sb.toString()); sb.clear() }
-                else -> sb.append(ch)
+    /** RFC 4180 fields, including doubled quote escapes and multiline descriptions. */
+    private fun parseRecords(csv: String): List<List<String>> {
+        val records = mutableListOf<List<String>>()
+        var cells = mutableListOf<String>()
+        val cell = StringBuilder()
+        var quoted = false
+        var i = 0
+        while (i < csv.length) {
+            when (val ch = csv[i]) {
+                '"' -> {
+                    if (quoted && i + 1 < csv.length && csv[i + 1] == '"') {
+                        cell.append('"')
+                        i++
+                    } else quoted = !quoted
+                }
+                ',' -> if (quoted) cell.append(ch) else {
+                    cells.add(cell.toString().trim())
+                    cell.setLength(0)
+                }
+                '\n', '\r' -> if (quoted) {
+                    cell.append('\n')
+                    if (ch == '\r' && i + 1 < csv.length && csv[i + 1] == '\n') i++
+                } else {
+                    cells.add(cell.toString().trim())
+                    cell.setLength(0)
+                    if (cells.any { it.isNotBlank() }) records.add(cells)
+                    cells = mutableListOf()
+                    if (ch == '\r' && i + 1 < csv.length && csv[i + 1] == '\n') i++
+                }
+                else -> cell.append(ch)
             }
+            i++
         }
-        result.add(sb.toString())
-        return result
+        cells.add(cell.toString().trim())
+        if (cells.any { it.isNotBlank() }) records.add(cells)
+        return records
     }
 }
