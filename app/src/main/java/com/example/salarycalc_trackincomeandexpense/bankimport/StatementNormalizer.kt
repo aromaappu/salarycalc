@@ -13,6 +13,7 @@ object StatementNormalizer {
     // All supported statement date formats. Order matters — the first match wins.
     private val INPUT_FORMATS = listOf(
         "dd-MM-yyyy", "dd/MM/yyyy", "dd.MM.yyyy",
+        "dd-MM-yy", "dd/MM/yy", "dd.MM.yy",
         "yyyy-MM-dd", "yyyy/MM/dd",
         "dd-MMM-yyyy", "dd/MMM/yyyy",
         "dd MMM yyyy", "dd MMM, yyyy",
