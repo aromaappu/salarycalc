@@ -15,6 +15,14 @@ object CsvReader {
 
     fun read(stream: InputStream): List<ParsedTransaction> = readDetailed(stream).transactions
 
+    fun decode(bytes: ByteArray): String = when {
+        bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte() ->
+            String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+        bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte() ->
+            String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+        else -> String(bytes, Charsets.UTF_8).removePrefix("\uFEFF")
+    }
+
     /**
      * Bank CSV files are not all in the app's export format. Read the header
      * by column meaning, handle quoted commas/newlines, and report rejected
@@ -22,13 +30,7 @@ object CsvReader {
      */
     fun readDetailed(stream: InputStream): ReadResult {
         val bytes = stream.use { it.readBytes() }
-        val content = when {
-            bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte() ->
-                String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
-            bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte() ->
-                String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
-            else -> String(bytes, Charsets.UTF_8).removePrefix("\uFEFF")
-        }
+        val content = decode(bytes)
         val records = parseRecords(content, detectDelimiter(content))
         if (records.isEmpty()) return ReadResult(emptyList(), 0, 0, false)
 
