@@ -201,7 +201,7 @@ object ImportRepository {
      * Saves a list of transactions to the database (creating income sources /
      * expense categories on the fly). Returns the number actually inserted.
      */
-    fun save(txs: List<ParsedTransaction>, db: AppDatabase): Int {
+    fun save(txs: List<ParsedTransaction>, db: AppDatabase, statementId: Long? = null): Int {
         var saved = 0
         val incomeSources    = db.getIncomeSources().toHashSet()
         val expenseCategories = db.getExpenseCategories().toHashSet()
@@ -216,7 +216,7 @@ object ImportRepository {
             } else {
                 rawName.ifEmpty { if (tx.type == "CREDIT") "Credit" else "Expense" }
             }
-            val id = db.addTransactionWithHash(type, tx.amount, name, tx.date, tx.hash)
+            val id = db.addTransactionWithHash(type, tx.amount, name, tx.date, tx.hash, statementId)
             if (id > 0) {
                 saved++
                 if (type == AppDatabase.TYPE_INCOME) {
@@ -227,6 +227,27 @@ object ImportRepository {
             }
         }
         return saved
+    }
+
+    /**
+     * Link every new imported row to its statement in the same DB transaction,
+     * so deleting that statement can remove only its own imported rows.
+     */
+    fun saveStatement(txs: List<ParsedTransaction>, db: AppDatabase, fileName: String, closingBalance: Double): Int {
+        if (txs.isEmpty()) return 0
+        val sql = db.writableDatabase
+        sql.beginTransaction()
+        try {
+            val statementId = db.addBankStatement(fileName, 0, closingBalance)
+            if (statementId <= 0) return 0
+            val count = save(txs, db, statementId)
+            if (count == 0) db.deleteBankStatement(statementId)
+            else db.updateBankStatementCount(statementId, count)
+            sql.setTransactionSuccessful()
+            return count
+        } finally {
+            sql.endTransaction()
+        }
     }
 
     // ── Internal pipeline ─────────────────────────────────────────────────────
