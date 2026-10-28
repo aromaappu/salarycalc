@@ -21,7 +21,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,7 +40,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.example.salarycalc_trackincomeandexpense.SmsImport
 import com.example.salarycalc_trackincomeandexpense.SmsNotificationListener
 import com.example.salarycalc_trackincomeandexpense.SmsReceiver
 import com.example.salarycalc_trackincomeandexpense.data.AppDatabase
@@ -62,8 +60,8 @@ fun AutoTransactionScreen(
     val prefs = remember { context.getSharedPreferences(SMS_PREFS, Context.MODE_PRIVATE) }
 
     var refreshKey by remember { mutableIntStateOf(0) }
-    var showImportDialog by remember { mutableStateOf(false) }
-    var trackingEnabled by remember { mutableStateOf(prefs.getBoolean(KEY_SMS_ENABLED, false)) }
+    var showTrackingDisclosure by remember { mutableStateOf(false) }
+    var trackingEnabled by remember { mutableStateOf(SmsNotificationListener.isTrackingEnabled(context)) }
     var confirmationEnabled by remember { mutableStateOf(prefs.getBoolean(KEY_CONFIRMATION_ENABLED, false)) }
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
@@ -81,10 +79,13 @@ fun AutoTransactionScreen(
     }
 
     fun enableTracking() {
-        prefs.edit().putBoolean(KEY_SMS_ENABLED, true).apply()
+        prefs.edit()
+            .putBoolean(SmsNotificationListener.KEY_DISCLOSURE_ACCEPTED, true)
+            .putBoolean(KEY_SMS_ENABLED, true)
+            .apply()
         trackingEnabled = true
         refreshKey++
-        toast("✅ Auto tracking enabled — allow Notification Access if asked")
+        toast("Allow Notification Access in Settings to start auto tracking")
         if (!SmsNotificationListener.isAccessGranted(context)) {
             openNotificationAccess()
         }
@@ -100,7 +101,7 @@ fun AutoTransactionScreen(
         if (trackingEnabled) {
             disableTracking()
         } else {
-            enableTracking()
+            showTrackingDisclosure = true
         }
     }
 
@@ -143,32 +144,17 @@ fun AutoTransactionScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFF667EEA))
-                    .clickable { openNotificationAccess() }
+                    .clickable {
+                        if (trackingEnabled) openNotificationAccess()
+                        else showTrackingDisclosure = true
+                    }
                     .padding(vertical = 12.dp),
                 horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center
             ) {
                 Text("🔔 Allow Notification Access", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
             Text(
-                "Payment SMS are read from your notifications — no SMS permission is used, so this app installs without Play Protect warnings. One-time allow in Settings.",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
-            )
-
-            Spacer(Modifier.height(14.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFF2563EB))
-                    .clickable { showImportDialog = true }
-                    .padding(vertical = 12.dp),
-                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center
-            ) {
-                Text("📥 Import SMS Manually", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            }
-            Text(
-                "Tip: open any bank SMS and tap Share → SalaryCalc, or paste it below.",
+                "Optional: read payment notifications from your default SMS app, Google Pay, PhonePe, Paytm and BHIM to save transactions locally. Notification Access must be allowed in Settings. Turn off Auto Transactions here to stop processing; revoke Notification Access in Android Settings to remove access.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
@@ -230,6 +216,38 @@ fun AutoTransactionScreen(
                 }
             }
         }
+    }
+
+    if (showTrackingDisclosure) {
+        AlertDialog(
+            onDismissRequest = { showTrackingDisclosure = false },
+            title = { Text("Allow payment notification processing?") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text(
+                        "Android Notification Access can expose notifications from other apps. " +
+                            "SalaryCalc filters sources before reading text: only your default SMS app, " +
+                            "Google Pay, PhonePe, Paytm and BHIM are supported. Notifications from those " +
+                            "sources can include non-payment messages. Their text and sender are processed " +
+                            "on your device to detect payments, including while SalaryCalc is closed. " +
+                            "Detected amounts, dates and transaction details are stored locally; this " +
+                            "feature does not send notification content to a server.\n\n" +
+                            "This is optional. You can enter income and expenses manually instead. " +
+                            "Turn off Auto Transactions to stop processing, or revoke Notification Access " +
+                            "in Android Settings. Existing saved transactions remain until you delete them."
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showTrackingDisclosure = false
+                    enableTracking()
+                }) { Text("Agree and continue") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTrackingDisclosure = false }) { Text("Not now") }
+            }
+        )
     }
 
     // Non-dismissable confirmation modal: only Accept/Reject closes it. Shown
@@ -300,17 +318,6 @@ fun AutoTransactionScreen(
         }
     }
 
-    if (showImportDialog) {
-        SmsImportDialog(
-            db = db,
-            initialText = "",
-            onDismiss = { showImportDialog = false },
-            onImported = {
-                showImportDialog = false
-                refreshKey++
-            }
-        )
-    }
 }
 
 @Composable
@@ -375,70 +382,3 @@ private fun ToggleRow(
     }
 }
 
-// Dialog used both by the Manual Import button and when an SMS is shared into
-// the app (ACTION_SEND). Works in every build — no SMS permission needed.
-@Composable
-fun SmsImportDialog(
-    db: AppDatabase,
-    initialText: String,
-    onDismiss: () -> Unit,
-    onImported: () -> Unit
-) {
-    val context = LocalContext.current
-    var text by remember { mutableStateOf(initialText) }
-    val parsed = remember(text) { SmsImport.parse(text) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("📥 Import SMS") },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 3,
-                    maxLines = 6,
-                    placeholder = { Text("Paste the bank/UPI SMS here...") }
-                )
-                if (text.isNotBlank()) {
-                    Spacer(Modifier.height(10.dp))
-                    val tx = parsed
-                    if (tx != null) {
-                        val txType = if (tx.transactionType == "credit") "Income" else "Expense"
-                        val txName = tx.merchant.ifEmpty { tx.category }
-                        Text(
-                            "Detected: $txType · ${tx.amount} · $txName",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    } else {
-                        Text(
-                            "⚠️ Could not detect a transaction in this message.",
-                            fontSize = 12.sp,
-                            color = Color(0xFFB45309)
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = parsed != null,
-                onClick = {
-                    val tx = parsed
-                    if (tx != null && SmsImport.addToDatabase(db, tx)) {
-                        Toast.makeText(context, "✅ Transaction added", Toast.LENGTH_SHORT).show()
-                        onImported()
-                    } else {
-                        Toast.makeText(context, "Could not add transaction", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            ) { Text("Add") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
-        }
-    )
-}

@@ -42,8 +42,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-    private val sharedSms = mutableStateOf<String?>(null)
-
     // Bumps AutoEvents.refreshTick whenever a bank/UPI notification is added,
     // so the open screens (Income/Expense/Charts/Dashboard) refresh at once.
     private val autoTicker = object : BroadcastReceiver() {
@@ -73,8 +71,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        handleShareIntent(intent)
 
         db = AppDatabase(this)
         db.seedDefaults()
@@ -110,28 +106,10 @@ class MainActivity : ComponentActivity() {
                         db,
                         settings,
                         darkMode = darkMode,
-                        onDarkModeChange = { darkMode = it },
-                        incomingSmsText = sharedSms.value,
-                        onSmsImportConsumed = { sharedSms.value = null }
+                        onDarkModeChange = { darkMode = it }
                     )
                 }
             }
-        }
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        handleShareIntent(intent)
-    }
-
-    private fun handleShareIntent(intent: Intent?) {
-        if (intent == null) return
-        if (intent.action != Intent.ACTION_SEND) return
-        if (intent.type != "text/plain") return
-        val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim()
-        if (!text.isNullOrEmpty()) {
-            sharedSms.value = text
         }
     }
 
@@ -147,3 +125,4 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
