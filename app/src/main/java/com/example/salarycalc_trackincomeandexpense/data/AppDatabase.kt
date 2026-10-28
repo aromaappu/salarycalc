@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import com.example.salarycalc_trackincomeandexpense.bankimport.BankTransactionMatcher
 import java.io.File
 
 class AppDatabase(context: Context) :
@@ -14,7 +15,7 @@ class AppDatabase(context: Context) :
 
     companion object {
         private const val DB_NAME = "salarycalc.db"
-        private const val DB_VERSION = 6
+        private const val DB_VERSION = 8
 
         const val TYPE_INCOME = "income"
         const val TYPE_EXPENSE = "expense"
@@ -40,10 +41,17 @@ class AppDatabase(context: Context) :
                 receipt_name TEXT,
                 receipt_path TEXT,
                 created_at INTEGER NOT NULL,
-                tx_hash TEXT
+                tx_hash TEXT,
+                statement_id INTEGER,
+                tx_reference TEXT NOT NULL DEFAULT '',
+                origin TEXT NOT NULL DEFAULT 'manual',
+                dedupe_key TEXT
             )"""
         )
         db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_hash ON transactions(tx_hash) WHERE tx_hash IS NOT NULL")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_tx_statement ON transactions(statement_id)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_dedupe_key ON transactions(dedupe_key) WHERE dedupe_key IS NOT NULL")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_tx_date_amount_type ON transactions(date, amount, type)")
         db.execSQL(
             """CREATE TABLE income_sources (
                 name TEXT PRIMARY KEY
@@ -75,7 +83,8 @@ class AppDatabase(context: Context) :
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 amount REAL NOT NULL,
-                date TEXT NOT NULL
+                date TEXT NOT NULL,
+                repeat_monthly INTEGER NOT NULL DEFAULT 0
             )"""
         )
         db.execSQL(
@@ -126,6 +135,19 @@ class AppDatabase(context: Context) :
         }
         if (oldVersion < 6) {
             createFdTables(db)
+        }
+        if (oldVersion < 7) {
+            db.execSQL("ALTER TABLE transactions ADD COLUMN statement_id INTEGER")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_tx_statement ON transactions(statement_id)")
+            db.execSQL("ALTER TABLE reminders ADD COLUMN repeat_monthly INTEGER NOT NULL DEFAULT 0")
+        }
+        if (oldVersion < 8) {
+            db.execSQL("ALTER TABLE transactions ADD COLUMN tx_reference TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE transactions ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'")
+            db.execSQL("ALTER TABLE transactions ADD COLUMN dedupe_key TEXT")
+            db.execSQL("UPDATE transactions SET origin='statement' WHERE statement_id IS NOT NULL")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_dedupe_key ON transactions(dedupe_key) WHERE dedupe_key IS NOT NULL")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_tx_date_amount_type ON transactions(date, amount, type)")
         }
     }
 
@@ -248,17 +270,74 @@ class AppDatabase(context: Context) :
         return writableDatabase.insert("transactions", null, values)
     }
 
-    /** Insert with SHA-256 hash for bank-import dedup. Returns -1 on hash collision (duplicate). */
-    fun addTransactionWithHash(type: String, amount: Double, name: String, date: String, hash: String): Long {
+    /**
+     * Bank statement rows and notification entries use the SAME reference
+     * fingerprint. The DB unique index makes this safe against race conditions.
+     */
+    fun addTransactionWithHash(
+        type: String, amount: Double, name: String, date: String, hash: String,
+        statementId: Long? = null, reference: String = ""
+    ): Long {
+        val entry = BankTransactionMatcher.Entry(date, type, amount, name, reference, "statement")
         val values = ContentValues().apply {
             put("type", type)
             put("amount", amount)
             put("name", name)
             put("date", date)
             put("tx_hash", hash)
+            put("tx_reference", BankTransactionMatcher.reference(reference, name))
+            put("origin", "statement")
+            BankTransactionMatcher.strongKey(entry)?.let { put("dedupe_key", it) }
+            if (statementId != null) put("statement_id", statementId)
             put("created_at", System.currentTimeMillis())
         }
-        return writableDatabase.insertWithOnConflict("transactions", null, values, SQLiteDatabase.CONFLICT_IGNORE)
+        return writableDatabase.insertWithOnConflict(
+            "transactions", null, values, SQLiteDatabase.CONFLICT_IGNORE
+        )
+    }
+
+    /** Save auto-detected bank/UPI events without creating duplicate reference IDs. */
+    fun addAutoDetectedTransaction(
+        type: String, amount: Double, name: String, date: String, reference: String
+    ): Long {
+        val entry = BankTransactionMatcher.Entry(date, type, amount, name, reference, "sms")
+        val values = ContentValues().apply {
+            put("type", type)
+            put("amount", amount)
+            put("name", name)
+            put("date", date)
+            put("tx_reference", BankTransactionMatcher.reference(reference, name))
+            put("origin", "sms")
+            BankTransactionMatcher.strongKey(entry)?.let { put("dedupe_key", it) }
+            put("created_at", System.currentTimeMillis())
+        }
+        return writableDatabase.insertWithOnConflict(
+            "transactions", null, values, SQLiteDatabase.CONFLICT_IGNORE
+        )
+    }
+
+    fun getPotentialTransactionMatches(
+        type: String, amount: Double, date: String
+    ): List<BankTransactionMatcher.Entry> {
+        val first = runCatching { java.time.LocalDate.parse(date).minusDays(2).toString() }.getOrDefault(date)
+        val last = runCatching { java.time.LocalDate.parse(date).plusDays(2).toString() }.getOrDefault(date)
+        return readableDatabase.rawQuery(
+            """SELECT date, type, amount, name, tx_reference, origin
+                FROM transactions
+                WHERE type = ? AND date >= ? AND date <= ?
+                  AND amount BETWEEN ? AND ?""",
+            arrayOf(type, first, last, (amount - 0.004).toString(), (amount + 0.004).toString())
+        ).use { cursor ->
+            val rows = mutableListOf<BankTransactionMatcher.Entry>()
+            while (cursor.moveToNext()) {
+                rows.add(BankTransactionMatcher.Entry(
+                    date = cursor.getString(0), type = cursor.getString(1),
+                    amount = cursor.getDouble(2), name = cursor.getString(3),
+                    reference = cursor.getString(4) ?: "", source = cursor.getString(5) ?: "manual"
+                ))
+            }
+            rows
+        }
     }
 
     /** Returns all non-null tx_hash values — used by DuplicateChecker. */
@@ -539,7 +618,8 @@ class AppDatabase(context: Context) :
                         id = it.getLong(it.getColumnIndexOrThrow("id")),
                         name = it.getString(it.getColumnIndexOrThrow("name")),
                         amount = it.getDouble(it.getColumnIndexOrThrow("amount")),
-                        date = it.getString(it.getColumnIndexOrThrow("date"))
+                        date = it.getString(it.getColumnIndexOrThrow("date")),
+                        repeatMonthly = it.getInt(it.getColumnIndexOrThrow("repeat_monthly")) != 0
                     )
                 )
             }
@@ -547,14 +627,17 @@ class AppDatabase(context: Context) :
         return list
     }
 
-    fun addReminder(name: String, amount: Double, date: String): Long {
+    fun addReminder(name: String, amount: Double, date: String, repeatMonthly: Boolean = false): Long {
         val values = ContentValues().apply {
             put("name", name)
             put("amount", amount)
             put("date", date)
+            put("repeat_monthly", if (repeatMonthly) 1 else 0)
         }
         return writableDatabase.insert("reminders", null, values)
     }
+
+    fun getReminder(id: Long): Reminder? = getReminders().firstOrNull { it.id == id }
 
     fun deleteReminder(id: Long) {
         writableDatabase.delete("reminders", "id = ?", arrayOf(id.toString()))
@@ -627,8 +710,35 @@ class AppDatabase(context: Context) :
         }
     }
 
+    /** Transaction counts include only rows reliably linked to this statement. */
+    fun getLinkedStatementTransactionCount(id: Long): Int =
+        readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM transactions WHERE statement_id = ?",
+            arrayOf(id.toString())
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+
+    /** Never guess which older, unlinked transactions belonged to this file. */
+    fun deleteBankStatementAndLinkedTransactions(id: Long): Int {
+        val database = writableDatabase
+        database.beginTransaction()
+        try {
+            val deleted = database.delete("transactions", "statement_id = ?", arrayOf(id.toString()))
+            database.delete("bank_statements", "id = ?", arrayOf(id.toString()))
+            database.setTransactionSuccessful()
+            return deleted
+        } finally {
+            database.endTransaction()
+        }
+    }
+
     fun deleteBankStatement(id: Long) {
         writableDatabase.delete("bank_statements", "id = ?", arrayOf(id.toString()))
+    }
+
+    fun updateBankStatementCount(id: Long, count: Int) {
+        writableDatabase.update("bank_statements", ContentValues().apply {
+            put("tx_count", count)
+        }, "id = ?", arrayOf(id.toString()))
     }
 
     fun getBankStatementByFile(fileName: String): BankStatementRecord? {

@@ -98,8 +98,25 @@ object LoanScheduler {
 
     /** App-start reconciliation: reschedule next reminders + overdue alerts. */
     fun reconcileAll(context: Context, db: AppDatabase) {
+        val today = LocalDate.now()
+        val prefs = context.getSharedPreferences("salarycalc_loan_due_notices", Context.MODE_PRIVATE)
         db.getLoans(LoanStatus.ACTIVE).forEach { loan ->
             scheduleNext(context, db, loan.id)
+            val next = db.getLoanSchedules(loan.id).firstOrNull { isUnpaid(it) } ?: return@forEach
+            val due = parseDate(next.dueDate) ?: return@forEach
+            val key = "loan_${loan.id}_${next.paymentNumber}_${today}"
+            if (prefs.getBoolean(key, false)) return@forEach
+            val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+            if (due.isBefore(today)) {
+                notifyOverdue(context, db, loan.id)
+            } else if (due.isEqual(today) && hour >= 9) {
+                NotificationHelper.showNotification(
+                    context, alarmId(loan.id, next.paymentNumber, dayBefore = false),
+                    "Loan payment due today",
+                    "${loan.name}: ${rupee(next.expectedPayment - next.paidAmount)} remaining."
+                )
+            } else return@forEach
+            prefs.edit().putBoolean(key, true).apply()
         }
     }
 

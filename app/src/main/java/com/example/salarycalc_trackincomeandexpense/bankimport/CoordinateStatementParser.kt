@@ -32,13 +32,41 @@ class CoordinateStatementParser {
         const val ROW_Y_TOLERANCE = 6f
     }
 
-    fun parse(elements: List<PdfReader.PdfTextElement>): List<ParsedRow> {
+    fun parse(
+        elements: List<PdfReader.PdfTextElement>,
+        openingBalance: BigDecimal? = null
+    ): List<ParsedRow> {
         if (elements.isEmpty()) return emptyList()
         val layout = inferLayout(elements)
-        val rows = groupByRow(elements, layout)
-        return rows
-            .sortedByDescending { it.firstOrNull()?.y ?: 0f }
-            .mapNotNull { row -> buildRow(row, layout) }
+        val rows = groupByRow(elements, layout).mapNotNull { row -> buildRow(row, layout) }
+        // Some banks display newest entries first. For balance continuity,
+        // process old-to-new while still returning the printed row order.
+        val backwards = rows.size > 1 &&
+            rows.first().date != null && rows.last().date != null &&
+            rows.first().date!! > rows.last().date!!
+        val chronological = if (backwards) rows.asReversed() else rows
+        var previous = openingBalance
+        val corrected = chronological.map { row ->
+            val amount = row.debit ?: row.credit
+            val current = row.balance
+            val prior = previous
+            var result = row
+            if (prior != null && current != null && amount != null && amount.signum() > 0) {
+                val change = current.subtract(prior)
+                if (change.abs().subtract(amount).abs() <= BigDecimal("0.01")) {
+                    // A consistent running balance is stronger evidence than
+                    // keywords like "payment", "transfer" or default debit.
+                    result = if (change.signum() > 0) {
+                        row.copy(debit = null, credit = amount)
+                    } else if (change.signum() < 0) {
+                        row.copy(debit = amount, credit = null)
+                    } else row
+                }
+            }
+            if (current != null) previous = current
+            result
+        }
+        return if (backwards) corrected.asReversed() else corrected
     }
 
     private fun inferLayout(elements: List<PdfReader.PdfTextElement>): BankStatementLayout {
@@ -58,10 +86,13 @@ class CoordinateStatementParser {
 
     private fun groupByRow(elements: List<PdfReader.PdfTextElement>, layout: BankStatementLayout): List<List<PdfReader.PdfTextElement>> {
         val rows = mutableListOf<MutableList<PdfReader.PdfTextElement>>()
-        elements.sortedBy { it.y }.forEach { element ->
+        elements.forEach { element ->
             val last = rows.lastOrNull()
             val candidate = last?.firstOrNull()
-            if (last != null && candidate != null && kotlin.math.abs(element.y - candidate.y) <= ROW_Y_TOLERANCE) {
+            if (last != null && candidate != null &&
+                element.pageNumber == candidate.pageNumber &&
+                kotlin.math.abs(element.y - candidate.y) <= ROW_Y_TOLERANCE
+            ) {
                 last.add(element)
             } else {
                 rows.add(mutableListOf(element))

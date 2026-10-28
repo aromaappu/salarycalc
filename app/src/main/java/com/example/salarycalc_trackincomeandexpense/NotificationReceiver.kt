@@ -36,31 +36,12 @@ class NotificationReceiver : BroadcastReceiver() {
         }
 
         val appContext = context.applicationContext
-
-        // Ensure channel exists (Android 8+)
-        NotificationHelper.createChannel(appContext)
-
-        val openIntent = Intent(appContext, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            appContext, id, openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val builder = NotificationCompat.Builder(appContext, NotificationHelper.CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_popup_reminder)
-            .setContentTitle(title)
-            .setContentText(message)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-            .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
-            .setDefaults(NotificationCompat.DEFAULT_ALL)
-
-        val manager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(id, builder.build())
-
+        NotificationHelper.showNotification(appContext, id, title, message)
         NotificationStore.remove(appContext, id)
+        // Only database-backed bill reminders recur; loan alarms remain one-off.
+        if (title == "Bill Reminder") {
+            ReminderScheduler.scheduleNextMonthly(appContext, id.toLong())
+        }
         NotificationStore.removeExpired(appContext)
     }
 }
