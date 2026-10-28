@@ -1,5 +1,8 @@
 package com.example.salarycalc_trackincomeandexpense
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -31,8 +34,18 @@ object NotificationHelper {
     }
 
     // Builds and shows the actual notification in the system tray
-    fun showNotification(context: Context, id: Int, title: String, message: String) {
+    fun showNotification(
+        context: Context,
+        id: Int,
+        title: String,
+        message: String,
+        kind: NotificationPreferences.Kind = classify(title)
+    ) {
+        if (!NotificationPreferences.isEnabled(context, kind)) return
         createChannel(context)
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return
 
         // Create intent to open MainActivity when notification is tapped
         val intent = Intent(context, MainActivity::class.java).apply {
@@ -60,10 +73,28 @@ object NotificationHelper {
         manager.notify(id, builder.build())
     }
 
-    // Show notification for auto-detected transaction
-    fun showTransactionNotification(context: Context, transaction: SmsReceiver.TransactionData) {
-        val title = if (transaction.transactionType == "credit") "💰 Income Detected" else "📉 Expense Detected"
+    private fun classify(title: String): NotificationPreferences.Kind {
+        val t = title.lowercase(java.util.Locale.ROOT)
+        return when {
+            t.startsWith("loan ") -> NotificationPreferences.Kind.LOAN
+            t.startsWith("bill ") -> NotificationPreferences.Kind.BILL
+            t.startsWith("fd ") -> NotificationPreferences.Kind.FD
+            t.startsWith("auto income") || t.startsWith("auto expense") -> NotificationPreferences.Kind.AUTO
+            else -> NotificationPreferences.Kind.TRANSACTION
+        }
+    }
+
+    /** Distinguish successful auto-add from a transaction waiting for approval. */
+    fun showTransactionNotification(
+        context: Context,
+        transaction: SmsReceiver.TransactionData,
+        needsApproval: Boolean = true
+    ) {
+        val kind = if (transaction.transactionType == "credit") "Income" else "Expense"
+        val title = if (needsApproval) "$kind detected — approve to add"
+            else "$kind added successfully"
         val message = "${transaction.merchant.ifEmpty { transaction.category }}: ₹${transaction.amount}"
-        showNotification(context, 9999, title, message)
+        val id = (System.currentTimeMillis() and 0x7FFFFFFF).toInt()
+        showNotification(context, id, title, message, NotificationPreferences.Kind.TRANSACTION)
     }
 }

@@ -1,5 +1,6 @@
 package com.example.salarycalc_trackincomeandexpense.ui.screens
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -24,8 +26,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.salarycalc_trackincomeandexpense.data.AppDatabase
@@ -139,10 +145,10 @@ fun ChartsScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.Bottom
             ) {
-                BarGroup(currency, data.prevInc, "Prev Inc", Color(0xFF6EE7B7), maxVal1)
-                BarGroup(currency, data.currInc, "Curr Inc", Color(0xFF10B981), maxVal1)
-                BarGroup(currency, data.prevExp, "Prev Exp", Color(0xFFFCA5A5), maxVal1)
-                BarGroup(currency, data.currExp, "Curr Exp", Color(0xFFEF4444), maxVal1)
+                BarGroup(currency, data.prevInc, "Prev Inc", Color(0xFF6EE7B7), maxVal1, Modifier.weight(1f))
+                BarGroup(currency, data.currInc, "Curr Inc", Color(0xFF10B981), maxVal1, Modifier.weight(1f))
+                BarGroup(currency, data.prevExp, "Prev Exp", Color(0xFFFCA5A5), maxVal1, Modifier.weight(1f))
+                BarGroup(currency, data.currExp, "Curr Exp", Color(0xFFEF4444), maxVal1, Modifier.weight(1f))
             }
 
             Spacer(Modifier.height(12.dp))
@@ -157,8 +163,8 @@ fun ChartsScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.Bottom
             ) {
-                BarGroup(currency, prevBalance, "Prev Bal", Color(0xFF667EEA), maxBal)
-                BarGroup(currency, currBalance, "Curr Bal", Color(0xFF8B5CF6), maxBal)
+                BarGroup(currency, prevBalance, "Prev Bal", Color(0xFF667EEA), maxBal, Modifier.weight(1f))
+                BarGroup(currency, currBalance, "Curr Bal", Color(0xFF8B5CF6), maxBal, Modifier.weight(1f))
             }
 
             Spacer(Modifier.height(12.dp))
@@ -171,11 +177,12 @@ fun ChartsScreen(
             Column(
                 modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(12.dp)
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterDropdown("📅 Year", yearOptions, filterYear, { filterYear = it }, Modifier.weight(1f))
                     FilterDropdown("🗓️ Month", monthOptions, filterMonth, { filterMonth = it }, Modifier.weight(1f))
-                    FilterDropdown("📌 Category", categoryOptions, filterCategory, { filterCategory = it }, Modifier.weight(1f))
                 }
+                Spacer(Modifier.height(8.dp))
+                FilterDropdown("📌 Category", categoryOptions, filterCategory, { filterCategory = it }, Modifier.fillMaxWidth())
             }
 
             Spacer(Modifier.height(8.dp))
@@ -193,11 +200,12 @@ fun ChartsScreen(
                         monthTotals.forEach { (key, value) ->
                             val label = try { MONTHS[key.substring(5).toInt() - 1].take(3) } catch (_: Exception) { key }
                             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(70.dp)) {
-                                Text(formatCurrency(currency, value), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(formatCurrency(currency, value), fontSize = 10.sp, maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(Modifier.height(4.dp))
                                 Box(Modifier.width(40.dp).height(barHeight(value, maxExp)).background(Color(0xFF8B5CF6)))
                                 Spacer(Modifier.height(4.dp))
-                                Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("$label ${key.take(4)}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -219,12 +227,52 @@ fun ChartsScreen(
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                 } else {
+                    Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                        Canvas(Modifier.size(180.dp)) {
+                            val stroke = 28.dp.toPx()
+                            val inset = stroke / 2f
+                            val arcSize = Size(size.width - stroke, size.height - stroke)
+                            var angle = -90f
+                            catTotals.forEachIndexed { index, (_, value) ->
+                                val sweep = (value / totalExp * 360.0).toFloat().coerceAtLeast(0f)
+                                if (sweep > 0f) {
+                                    drawArc(
+                                        color = hexColor(PIE_COLORS[index % PIE_COLORS.size]),
+                                        startAngle = angle,
+                                        sweepAngle = sweep,
+                                        useCenter = false,
+                                        style = Stroke(width = stroke),
+                                        topLeft = Offset(inset, inset),
+                                        size = arcSize
+                                    )
+                                }
+                                angle += sweep
+                            }
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Total spent", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(formatCurrency(currency, totalExp), fontSize = 14.sp,
+                                modifier = Modifier.width(130.dp),
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
                     catTotals.forEachIndexed { i, (cat, amt) ->
-                        val pct = if (totalExp > 0) kotlin.math.round(amt / totalExp * 100).toInt() else 0
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.width(12.dp).height(12.dp).background(hexColor(PIE_COLORS[i % PIE_COLORS.size])))
-                            Spacer(Modifier.width(6.dp))
-                            Text("$cat: ${formatCurrency(currency, amt)} ($pct%)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                        val pct = if (totalExp > 0) amt / totalExp * 100.0 else 0.0
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(12.dp).background(hexColor(PIE_COLORS[i % PIE_COLORS.size])))
+                            Spacer(Modifier.width(8.dp))
+                            Text(cat, modifier = Modifier.weight(1f), fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurface, maxLines = 2,
+                                overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.width(8.dp))
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(formatCurrency(currency, amt), fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                                Text("${String.format(java.util.Locale.US, "%.1f", pct)}%", fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 }
@@ -234,13 +282,15 @@ fun ChartsScreen(
 }
 
 @Composable
-private fun BarGroup(currency: String, value: Double, label: String, color: Color, maxVal: Double) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(formatCurrency(currency, value), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun BarGroup(currency: String, value: Double, label: String, color: Color, maxVal: Double, modifier: Modifier = Modifier) {
+    Column(modifier.padding(horizontal = 3.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(formatCurrency(currency, value), fontSize = 10.sp, maxLines = 1,
+            overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(4.dp))
-        Box(Modifier.width(60.dp).height(barHeight(value, maxVal)).background(color))
+        Box(Modifier.fillMaxWidth(0.55f).height(barHeight(value, maxVal)).background(color))
         Spacer(Modifier.height(4.dp))
-        Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(label, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

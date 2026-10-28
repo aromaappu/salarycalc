@@ -7,6 +7,7 @@ import android.content.SharedPreferences
 import org.json.JSONArray
 import org.json.JSONObject
 import com.example.salarycalc_trackincomeandexpense.data.AppDatabase
+import com.example.salarycalc_trackincomeandexpense.bankimport.BankTransactionMatcher
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.regex.Pattern
@@ -259,8 +260,21 @@ class SmsReceiver : BroadcastReceiver() {
 
     private fun handleTransaction(context: Context, prefs: SharedPreferences, transaction: TransactionData) {
         val confirmationEnabled = prefs.getBoolean(KEY_CONFIRMATION_ENABLED, false)
-
-        if (confirmationEnabled) {
+        val type = if (transaction.transactionType == "credit") AppDatabase.TYPE_INCOME else AppDatabase.TYPE_EXPENSE
+        val name = transaction.merchant.ifEmpty { transaction.category }
+        val db = AppDatabase(context)
+        val entry = BankTransactionMatcher.Entry(transaction.date, type, transaction.amount, name, transaction.referenceNumber, "sms")
+        val matches = try {
+            db.getPotentialTransactionMatches(type, transaction.amount, transaction.date)
+                .map { BankTransactionMatcher.classify(entry, it) }
+        } finally {
+            db.close()
+        }
+        if (matches.contains(BankTransactionMatcher.Match.CONFIRMED)) return
+        // An unreferenced notification that resembles an imported bank row
+        // needs confirmation; it must not silently create another transaction.
+        val possible = matches.contains(BankTransactionMatcher.Match.POSSIBLE)
+        if (confirmationEnabled || possible) {
             // Store as pending — confirmation popup will show in app
             val pending = getPendingTransactions(prefs).toMutableList()
             pending.add(transaction)
@@ -274,6 +288,7 @@ class SmsReceiver : BroadcastReceiver() {
         } else {
             // Auto-save: persist to store AND broadcast for live app
             if (!autoSaveTransaction(context, transaction)) return
+            NotificationHelper.showTransactionNotification(context, transaction, needsApproval = false)
             // Notify app directly
             val txType = if (transaction.transactionType == "credit") "income" else "expense"
             val txName = transaction.merchant.ifEmpty { transaction.category }
@@ -288,30 +303,36 @@ class SmsReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun autoSaveTransaction(context: Context, transaction: TransactionData): Boolean = try {
-        // Write straight into the database so the transaction is added
-        // immediately (no app restart or broadcast listener needed).
-        val txType = if (transaction.transactionType == "credit") "income" else "expense"
-        val txName = transaction.merchant.ifEmpty { transaction.category }
+    private fun isSameTransaction(a: TransactionData, b: TransactionData): Boolean {
+        return a.amount == b.amount &&
+            a.merchant == b.merchant &&
+            a.date == b.date &&
+            a.time == b.time
+    }
+
+    private fun autoSaveTransaction(context: Context, transaction: TransactionData): Boolean {
+        val type = if (transaction.transactionType == "credit") AppDatabase.TYPE_INCOME else AppDatabase.TYPE_EXPENSE
+        val name = transaction.merchant.ifEmpty { transaction.category }
         val date = transaction.date.ifBlank {
             SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(java.util.Date())
         }
         val db = AppDatabase(context)
-        // Notification duplicates are checked before this write using reference IDs
-        // and timestamps. Repeated legitimate same-day payments must remain separate.
-        if (txType == AppDatabase.TYPE_INCOME) {
-            if (!db.getIncomeSources().contains(txName)) db.addIncomeSource(txName)
-        } else {
-            if (!db.getExpenseCategories().contains(txName)) db.addExpenseCategory(txName)
+        try {
+            val entry = BankTransactionMatcher.Entry(date, type, transaction.amount, name, transaction.referenceNumber, "sms")
+            if (db.getPotentialTransactionMatches(type, transaction.amount, date).any {
+                BankTransactionMatcher.classify(entry, it) == BankTransactionMatcher.Match.CONFIRMED
+            }) return false
+            val id = db.addAutoDetectedTransaction(type, transaction.amount, name, date, transaction.referenceNumber)
+            if (id <= 0) return false
+            if (type == AppDatabase.TYPE_INCOME) {
+                if (!db.getIncomeSources().contains(name)) db.addIncomeSource(name)
+            } else {
+                if (!db.getExpenseCategories().contains(name)) db.addExpenseCategory(name)
+            }
+            return true
+        } finally {
+            db.close()
         }
-        db.addTransaction(
-            type = txType,
-            amount = transaction.amount,
-            name = txName,
-            date = date
-        ) > 0L
-    } catch (_: Exception) {
-        false
     }
 
     private fun getPendingTransactions(prefs: SharedPreferences): List<TransactionData> {
@@ -467,13 +488,12 @@ class SmsReceiver : BroadcastReceiver() {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val pending = getPendingTransactions(prefs).toMutableList()
         if (index !in pending.indices) return null
-        val transaction = pending[index]
+        val transaction = pending.removeAt(index)
+        prefs.edit()
+            .putString(KEY_PENDING_TRANSACTIONS, serializeTransactions(pending))
+            .apply()
         if (!autoSaveTransaction(context, transaction)) return null
-        pending.removeAt(index)
-        if (!prefs.edit()
-                .putString(KEY_PENDING_TRANSACTIONS, serializeTransactions(pending))
-                .commit()
-        ) return null
+        NotificationHelper.showTransactionNotification(context, transaction, needsApproval = false)
         val txType = if (transaction.transactionType == "credit") "income" else "expense"
         val txName = transaction.merchant.ifEmpty { transaction.category }
         val intent = Intent(AutoEvents.ACTION_AUTO_TRANSACTION)
