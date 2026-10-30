@@ -109,6 +109,27 @@ fun lifetimeBalance(db: AppDatabase): Double {
     return inc - exp
 }
 
+/**
+ * Chooses the net balance shown on the dashboard/statement.
+ * When the user keeps "use statement closing balance" ticked, the latest
+ * imported statement's closing balance wins (falling back to transactions).
+ * When unticked, only the transactions added in the app are used.
+ */
+fun resolveNetBalance(
+    statementClosingBalance: Double?,
+    transactionBalance: Double,
+    useStatementClosingBalance: Boolean
+): Double =
+    if (useStatementClosingBalance) statementClosingBalance ?: transactionBalance
+    else transactionBalance
+
+fun resolveNetBalance(db: AppDatabase, settings: com.example.salarycalc_trackincomeandexpense.data.SettingsStore): Double =
+    resolveNetBalance(
+        statementClosingBalance = db.getLatestClosingBalance(),
+        transactionBalance = lifetimeBalance(db),
+        useStatementClosingBalance = settings.isStatementNetBalanceEnabled()
+    )
+
 fun todayExpenseForTransactions(transactions: List<Transaction>, referenceDate: String): Double {
     val parts = parseDateParts(referenceDate) ?: return 0.0
     return transactions

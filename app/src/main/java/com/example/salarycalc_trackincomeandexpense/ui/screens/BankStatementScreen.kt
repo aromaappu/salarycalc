@@ -324,6 +324,9 @@ fun BankStatementScreen(
 
     // ── Bank import accuracy report — do not represent guesses as verified facts.
     importSummary?.let { report ->
+        var useStatementClosingBalance by remember(report) {
+            mutableStateOf(settings.isStatementNetBalanceEnabled())
+        }
         AlertDialog(
             onDismissRequest = { importSummary = null },
             title = { Text("Bank Import Accuracy Report") },
@@ -332,6 +335,18 @@ fun BankStatementScreen(
                     Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
+                    Text(
+                        "Please verify before relying on this data",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFDC2626)
+                    )
+                    Text(
+                        "This statement was read automatically and may not be 100% accurate. Some amounts, dates or names may be missing or wrong, especially for scanned PDFs. Compare the imported transactions with your original bank statement.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(6.dp))
                     Text(report.fileName, fontSize = 13.sp, fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface)
                     Spacer(Modifier.height(4.dp))
@@ -368,6 +383,39 @@ fun BankStatementScreen(
                     }
                     if (report.closingBalanceExtracted) {
                         SummaryRow("Reported closing balance", "₹${"%.2f".format(report.closingBalance)}")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = useStatementClosingBalance,
+                            onCheckedChange = {
+                                useStatementClosingBalance = it
+                                settings.setStatementNetBalanceEnabled(it)
+                            }
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "Net balance from this statement's closing balance",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                if (useStatementClosingBalance)
+                                    "Net balance will match the latest uploaded statement's closing balance."
+                                else
+                                    "Net balance will be calculated from the transactions added in the app.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    if (useStatementClosingBalance && !report.closingBalanceExtracted) {
+                        Text(
+                            "No closing balance was found in this file, so the transactions added in the app are used instead.",
+                            fontSize = 11.sp,
+                            color = Color(0xFFD97706)
+                        )
                     }
                     if (report.viaOcr) {
                         Text("Scanned text was processed with OCR; double-check amounts and dates.",

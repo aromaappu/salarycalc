@@ -80,11 +80,19 @@ fun SalaryCalcApp(
     db: AppDatabase,
     settings: SettingsStore,
     darkMode: Boolean,
-    onDarkModeChange: (Boolean) -> Unit
+    onDarkModeChange: (Boolean) -> Unit,
+    openStatementRequest: Int = 0
 ) {
     var currentTab by rememberSaveable { mutableIntStateOf(0) }
     var overlayStack: List<Overlay> by remember { mutableStateOf(listOf<Overlay>()) }
     val currentOverlay = overlayStack.lastOrNull()
+
+    // Month-end notification taps open the Statement screen directly.
+    androidx.compose.runtime.LaunchedEffect(openStatementRequest) {
+        if (openStatementRequest > 0) {
+            overlayStack = overlayStack + Overlay.STATEMENT
+        }
+    }
     var locked by remember { mutableStateOf(settings.isPinEnabled()) }
     var showFirstRunCurrency by remember { mutableStateOf(!settings.hasSeenWelcome()) }
 

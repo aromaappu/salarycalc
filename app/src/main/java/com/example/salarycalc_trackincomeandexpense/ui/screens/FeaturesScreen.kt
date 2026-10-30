@@ -91,7 +91,7 @@ fun FeaturesScreen(
             FeatureListItem(
                 icon = "📄",
                 iconBg = Color(0xFF0EA5E9),
-                title = "Bank Statement",
+                title = "Upload Bank Statement",
                 subtitle = "Upload PDF & auto-add transactions",
                 onClick = onOpenBankStatement
             )

@@ -57,7 +57,7 @@ import com.example.salarycalc_trackincomeandexpense.ui.theme.SettingsIconBg
 import com.example.salarycalc_trackincomeandexpense.ui.util.formatCurrency
 import com.example.salarycalc_trackincomeandexpense.ui.util.getRecentTransactions
 import com.example.salarycalc_trackincomeandexpense.ui.util.getTodayStr
-import com.example.salarycalc_trackincomeandexpense.ui.util.lifetimeBalance
+import com.example.salarycalc_trackincomeandexpense.ui.util.resolveNetBalance
 import com.example.salarycalc_trackincomeandexpense.ui.util.monthTotalsForTransactions
 import com.example.salarycalc_trackincomeandexpense.ui.util.todayExpenseForTransactions
 
@@ -80,7 +80,7 @@ fun DashboardScreen(
             DashboardData(
                 monthIncome = ct.income,
                 monthExpense = ct.expense,
-                balance = db.getLatestClosingBalance() ?: lifetimeBalance(db),
+                balance = resolveNetBalance(db, settings),
                 todayExpense = todayExpenseForTransactions(transactions, today),
                 today = today,
                 recent = getRecentTransactions(db, 7)

@@ -15,8 +15,8 @@ android {
         applicationId = "com.example.salarycalc_trackincomeandexpense"
         minSdk = 26
         targetSdk = 36
-        versionCode = 18
-        versionName = "2.0.3"
+        versionCode = 20
+        versionName = "2.0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

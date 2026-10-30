@@ -13,7 +13,8 @@ object NotificationPreferences {
         TRANSACTION("UPI / bank transactions", "Detected, approved and automatically saved transactions"),
         BILL("Bill reminders", "One-time and repeating due-date notifications"),
         LOAN("Loan payments", "Upcoming, due and overdue installments"),
-        FD("FD interest", "Monthly estimated fixed-deposit growth")
+        FD("FD interest", "Monthly estimated fixed-deposit growth"),
+        STATEMENT("Monthly statement", "Month-end reminder that your statement is ready to download")
     }
 
     private const val PREFS = "salarycalc_notification_preferences"

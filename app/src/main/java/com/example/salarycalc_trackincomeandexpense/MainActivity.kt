@@ -14,6 +14,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -30,6 +31,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var db: AppDatabase
     private lateinit var settings: SettingsStore
+    private var openStatementRequest by mutableIntStateOf(0)
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -69,8 +71,19 @@ class MainActivity : ComponentActivity() {
         autoTickerRegistered = true
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra(NotificationHelper.EXTRA_OPEN_STATEMENT, false)) {
+            openStatementRequest++
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (intent?.getBooleanExtra(NotificationHelper.EXTRA_OPEN_STATEMENT, false) == true) {
+            openStatementRequest++
+        }
 
         db = AppDatabase(this)
         db.seedDefaults()
@@ -106,7 +119,8 @@ class MainActivity : ComponentActivity() {
                         db,
                         settings,
                         darkMode = darkMode,
-                        onDarkModeChange = { darkMode = it }
+                        onDarkModeChange = { darkMode = it },
+                        openStatementRequest = openStatementRequest
                     )
                 }
             }

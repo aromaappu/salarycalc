@@ -39,11 +39,13 @@ import com.example.salarycalc_trackincomeandexpense.data.Transaction
 import com.example.salarycalc_trackincomeandexpense.ui.components.OverlayHeader
 import com.example.salarycalc_trackincomeandexpense.ui.util.formatCurrency
 import com.example.salarycalc_trackincomeandexpense.ui.util.getTodayStr
-import com.example.salarycalc_trackincomeandexpense.ui.util.lifetimeBalance
+import com.example.salarycalc_trackincomeandexpense.ui.util.resolveNetBalance
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
+import java.time.YearMonth
+import java.time.format.TextStyle
 import java.util.Locale
 
 @Composable
@@ -61,13 +63,22 @@ fun StatementScreen(
     var toDate by remember { mutableStateOf(getTodayStr()) }
     var pickerTarget by remember { mutableStateOf<String?>(null) }
     var downloading by remember { mutableStateOf(false) }
+    var downloadingMonthly by remember { mutableStateOf(false) }
 
     val invalidRange = fromDate > toDate
     val transactions = remember(fromDate, toDate) {
         if (invalidRange) emptyList() else db.getTransactionsBetween(fromDate, toDate)
     }
     val totals = StatementPdf.totals(transactions)
-    val netBalance = remember(db) { db.getLatestClosingBalance() ?: lifetimeBalance(db) }
+    val netBalance = remember(db, settings) { resolveNetBalance(db, settings) }
+
+    val lastMonth = remember { YearMonth.now().minusMonths(1) }
+    val monthFrom = lastMonth.atDay(1).toString()
+    val monthTo = lastMonth.atEndOfMonth().toString()
+    val monthLabel = remember(lastMonth) {
+        lastMonth.month.getDisplayName(TextStyle.FULL, Locale.getDefault()) + " " + lastMonth.year
+    }
+    val monthTransactions = remember(monthFrom, monthTo) { db.getTransactionsBetween(monthFrom, monthTo) }
 
     fun toast(msg: String) = android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
 
@@ -105,6 +116,34 @@ fun StatementScreen(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(10.dp)
         ) {
+            item {
+                MonthlyStatementCard(
+                    monthLabel = monthLabel,
+                    fromDate = monthFrom,
+                    toDate = monthTo,
+                    transactionCount = monthTransactions.size,
+                    downloading = downloadingMonthly,
+                    onDownload = {
+                        if (monthTransactions.isEmpty()) {
+                            toast("❌ No transactions in $monthLabel")
+                        } else {
+                            downloadingMonthly = true
+                            scope.launch {
+                                val saved = try {
+                                    withContext(Dispatchers.IO) {
+                                        StatementPdf.generate(context, monthTransactions, monthFrom, monthTo, netBalance)
+                                    }
+                                } catch (t: Throwable) {
+                                    null
+                                }
+                                downloadingMonthly = false
+                                if (saved != null) toast("✅ $monthLabel statement saved to Downloads: $saved")
+                                else toast("❌ Could not generate the PDF")
+                            }
+                        }
+                    }
+                )
+            }
             item { DateFilterCard(fromDate, toDate, onPick = { pickerTarget = it }) }
             if (invalidRange) {
                 item {
@@ -157,6 +196,70 @@ fun StatementScreen(
         )
     }
 }
+
+// ── Monthly shortcut ──────────────────────────────────────────────────────────
+
+@Composable
+private fun MonthlyStatementCard(
+    monthLabel: String,
+    fromDate: String,
+    toDate: String,
+    transactionCount: Int,
+    downloading: Boolean,
+    onDownload: () -> Unit
+) {
+    val enabled = transactionCount > 0 && !downloading
+    Column(
+        Modifier.fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))
+            .padding(12.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Monthly Statement",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                if (transactionCount > 0) "$transactionCount transactions" else "No transactions",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(4.dp)
+        Text(
+            "$monthLabel · ${prettyDate(fromDate)} – ${prettyDate(toDate)}",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(10.dp)
+        Box(
+            Modifier.fillMaxWidth()
+                .background(if (enabled) Color(0xFF059669) else Color(0xFF9CA3AF), RoundedCornerShape(10.dp))
+                .clickable(enabled = enabled, onClick = onDownload)
+                .padding(vertical = 13.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                if (downloading) "⏳ Generating…" else "⬇️ Download $monthLabel Statement",
+                color = Color.White,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+private fun prettyDate(date: String): String =
+    runCatching {
+        SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+            .format(SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(date) ?: java.util.Date())
+    }.getOrDefault(date)
 
 // ── Date filter ────────────────────────────────────────────────────────────────
 

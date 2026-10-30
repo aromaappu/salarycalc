@@ -29,6 +29,7 @@ class DailyFinanceWorker(
         try {
             AutoEntries.applyDue(db, SettingsStore(applicationContext), applicationContext)
             notifyEstimatedFdGrowth(db)
+            notifyMonthlyStatement()
         } finally {
             db.close()
         }
@@ -63,6 +64,34 @@ class DailyFinanceWorker(
             )
             prefs.edit().putBoolean(key, true).apply()
         }
+    }
+
+    /**
+     * On the 1st of each month, remind the user that the previous month's
+     * statement is ready. Fires once per month even if the worker runs again.
+     */
+    private fun notifyMonthlyStatement() {
+        val today = LocalDate.now()
+        if (today.dayOfMonth != 1) return
+        val previousMonth = YearMonth.from(today).minusMonths(1)
+        val prefs = applicationContext.getSharedPreferences(
+            "salarycalc_statement_notices", Context.MODE_PRIVATE
+        )
+        val key = previousMonth.toString()
+        if (prefs.getBoolean(key, false)) return
+        val monthName = previousMonth.month.getDisplayName(
+            java.time.format.TextStyle.FULL, java.util.Locale.getDefault()
+        )
+        val id = 900000 + (previousMonth.year % 100) * 12 + previousMonth.monthValue
+        NotificationHelper.showNotification(
+            applicationContext,
+            id,
+            "Download $monthName statement",
+            "Your $monthName ${previousMonth.year} statement is ready. Tap to open and download it.",
+            NotificationPreferences.Kind.STATEMENT,
+            openStatement = true
+        )
+        prefs.edit().putBoolean(key, true).apply()
     }
 
     companion object {

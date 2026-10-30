@@ -73,6 +73,12 @@ class SettingsStore(context: Context) {
     fun setSmsConfirmationEnabled(enabled: Boolean) =
         prefs.edit().putBoolean(KEY_SMS_CONFIRMATION, enabled).apply()
 
+    // ======================= NET BALANCE SOURCE =======================
+    /** true = use the latest uploaded statement's closing balance (default). */
+    fun isStatementNetBalanceEnabled(): Boolean = prefs.getBoolean(KEY_STATEMENT_NET_BALANCE, true)
+    fun setStatementNetBalanceEnabled(enabled: Boolean) =
+        prefs.edit().putBoolean(KEY_STATEMENT_NET_BALANCE, enabled).apply()
+
     fun getPendingSmsTransactions(): String =
         prefs.getString(KEY_PENDING_SMS, "[]") ?: "[]"
     fun setPendingSmsTransactions(json: String) =
@@ -132,6 +138,7 @@ class SettingsStore(context: Context) {
         private const val KEY_PIN_CODE = "pinCode"
         private const val KEY_SMS_TRACKING = "smsTrackingEnabled"
         private const val KEY_SMS_CONFIRMATION = "smsConfirmationEnabled"
+        private const val KEY_STATEMENT_NET_BALANCE = "statementNetBalanceEnabled"
         private const val KEY_PENDING_SMS = "pendingSmsTransactions"
         private const val KEY_WELCOME_SEEN = "welcomeSeen"
         private const val KEY_DEL_AUTO_INCOME_MONTHS = "deletedAutoIncomeMonths"

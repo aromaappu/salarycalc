@@ -20,4 +20,43 @@ class FormattersTest {
         assertEquals(20.0, totals.expense, 0.0)
         assertEquals(20.0, todayExpenseForTransactions(transactions, "2026-08-02"), 0.0)
     }
+
+    @Test
+    fun netBalanceUsesStatementClosingWhenSelected() {
+        assertEquals(
+            1250.50,
+            resolveNetBalance(
+                statementClosingBalance = 1250.50,
+                transactionBalance = 800.0,
+                useStatementClosingBalance = true
+            ),
+            0.0
+        )
+    }
+
+    @Test
+    fun netBalanceUsesAddedTransactionsWhenStatementClosingNotSelected() {
+        assertEquals(
+            800.0,
+            resolveNetBalance(
+                statementClosingBalance = 1250.50,
+                transactionBalance = 800.0,
+                useStatementClosingBalance = false
+            ),
+            0.0
+        )
+    }
+
+    @Test
+    fun netBalanceFallsBackToTransactionsWhenStatementHasNoClosingBalance() {
+        assertEquals(
+            800.0,
+            resolveNetBalance(
+                statementClosingBalance = null,
+                transactionBalance = 800.0,
+                useStatementClosingBalance = true
+            ),
+            0.0
+        )
+    }
 }

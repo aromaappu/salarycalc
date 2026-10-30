@@ -14,6 +14,7 @@ import androidx.core.app.NotificationCompat
 
 object NotificationHelper {
 
+    const val EXTRA_OPEN_STATEMENT = "salarycalc_open_statement"
     const val CHANNEL_ID = "salarycalc_reminders"
     private const val CHANNEL_NAME = "SalaryCalc Reminders"
     private const val CHANNEL_DESC = "Auto Income, Auto Expense, and Bill Reminder notifications"
@@ -39,7 +40,8 @@ object NotificationHelper {
         id: Int,
         title: String,
         message: String,
-        kind: NotificationPreferences.Kind = classify(title)
+        kind: NotificationPreferences.Kind = classify(title),
+        openStatement: Boolean = false
     ) {
         if (!NotificationPreferences.isEnabled(context, kind)) return
         createChannel(context)
@@ -50,6 +52,7 @@ object NotificationHelper {
         // Create intent to open MainActivity when notification is tapped
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(EXTRA_OPEN_STATEMENT, openStatement)
         }
         val pendingIntent = PendingIntent.getActivity(
             context,

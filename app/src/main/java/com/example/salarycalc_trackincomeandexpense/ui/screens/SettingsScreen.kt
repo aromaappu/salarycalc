@@ -209,6 +209,7 @@ fun SettingsScreen(
                         NotificationPreferences.Kind.BILL -> "🔔"
                         NotificationPreferences.Kind.LOAN -> "🏦"
                         NotificationPreferences.Kind.FD -> "📈"
+                        NotificationPreferences.Kind.STATEMENT -> "🧾"
                     },
                     iconBg = Color(0xFF334155),
                     title = kind.label,
