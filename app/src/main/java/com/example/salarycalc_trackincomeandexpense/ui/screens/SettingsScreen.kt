@@ -84,7 +84,6 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
 
     var refreshKey by remember { mutableStateOf(0) }
-    var notificationRefresh by remember { mutableStateOf(0) }
     var showChangePin by remember { mutableStateOf(false) }
     var showDisablePin by remember { mutableStateOf(false) }
     var showCurrencyPicker by remember { mutableStateOf(false) }
@@ -186,40 +185,6 @@ fun SettingsScreen(
                 subtitle = "Update your PIN code",
                 onClick = { showChangePin = true }
             )
-
-            Spacer(Modifier.height(14.dp))
-            Text(
-                "Notification Settings",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                "Turn off alerts without disabling tracking or reminders.",
-                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            NotificationPreferences.Kind.values().forEach { kind ->
-                val active = remember(notificationRefresh, kind) {
-                    NotificationPreferences.isEnabled(context, kind)
-                }
-                SettingsToggleRow(
-                    icon = when (kind) {
-                        NotificationPreferences.Kind.AUTO -> "💰"
-                        NotificationPreferences.Kind.TRANSACTION -> "📲"
-                        NotificationPreferences.Kind.BILL -> "🔔"
-                        NotificationPreferences.Kind.LOAN -> "🏦"
-                        NotificationPreferences.Kind.FD -> "📈"
-                    },
-                    iconBg = Color(0xFF334155),
-                    title = kind.label,
-                    subtitle = kind.description,
-                    active = active,
-                    onClick = {
-                        NotificationPreferences.setEnabled(context, kind, !active)
-                        notificationRefresh++
-                    }
-                )
-            }
 
             Spacer(Modifier.height(14.dp))
             Text(

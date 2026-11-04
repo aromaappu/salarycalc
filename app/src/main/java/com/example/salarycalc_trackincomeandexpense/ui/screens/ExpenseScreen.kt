@@ -3,6 +3,7 @@ package com.example.salarycalc_trackincomeandexpense.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +34,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -149,6 +151,7 @@ fun ExpenseScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(10.dp)
+                    .clip(RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.surface)
                     .padding(horizontal = 14.dp, vertical = 18.dp)
             ) {
@@ -227,6 +230,7 @@ fun ExpenseScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
                         .background(Color(0xFFF5576C))
                         .clickable { pickReceipt() }
                         .padding(vertical = 10.dp),
@@ -247,6 +251,7 @@ fun ExpenseScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
                         .background(Brush.linearGradient(listOf(Color(0xFFF5576C), Color(0xFFFF6B6B))))
                         .clickable {
                             val amt = amount.toDoubleOrNull()

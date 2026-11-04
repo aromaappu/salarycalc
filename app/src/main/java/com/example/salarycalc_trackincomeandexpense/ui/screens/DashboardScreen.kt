@@ -3,6 +3,7 @@ package com.example.salarycalc_trackincomeandexpense.ui.screens
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -128,12 +130,13 @@ private fun DashboardHeader(
     onToggleBalance: () -> Unit,
     currency: String
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Brush.linearGradient(listOf(GradientStart, GradientEnd)))
-            .padding(horizontal = 12.dp, vertical = 14.dp)
-    ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Brush.linearGradient(listOf(GradientStart, GradientEnd)))
+                    .padding(horizontal = 12.dp, vertical = 14.dp)
+            ) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = "💰 SalaryCalc",
@@ -152,12 +155,13 @@ private fun DashboardHeader(
                     .padding(horizontal = 12.dp, vertical = 3.dp)
             )
             Spacer(Modifier.height(12.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0x1AFFFFFF))
-                    .padding(horizontal = 8.dp, vertical = 10.dp)
-            ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0x1AFFFFFF))
+                            .padding(horizontal = 8.dp, vertical = 10.dp)
+                    ) {
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = "NET BALANCE",
@@ -194,6 +198,8 @@ private fun MonthlyCashCard(data: DashboardData, currency: String, balanceVisibl
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(12.dp))
             .background(Brush.linearGradient(listOf(MonthlyCashGradientStart, MonthlyCashGradientMid, MonthlyCashGradientEnd)))
             .padding(horizontal = 16.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -222,6 +228,8 @@ private fun TodaySpendingCard(data: DashboardData, currency: String, balanceVisi
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surface)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -285,6 +293,7 @@ private fun StatCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surface)
                 .padding(horizontal = 8.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -368,6 +377,7 @@ private fun ActionBox(
     Column(
         modifier = modifier
             .fillMaxHeight()
+            .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surface)
             .clickable { onClick() }
             .padding(14.dp)
@@ -375,6 +385,7 @@ private fun ActionBox(
         Box(
             modifier = Modifier
                 .size(40.dp)
+                .clip(RoundedCornerShape(10.dp))
                 .background(iconBg),
             contentAlignment = Alignment.Center
         ) {
