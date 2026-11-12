@@ -177,12 +177,11 @@ fun ChartsScreen(
             Column(
                 modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(12.dp)
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     FilterDropdown("📅 Year", yearOptions, filterYear, { filterYear = it }, Modifier.weight(1f))
                     FilterDropdown("🗓️ Month", monthOptions, filterMonth, { filterMonth = it }, Modifier.weight(1f))
+                    FilterDropdown("📌 Category", categoryOptions, filterCategory, { filterCategory = it }, Modifier.weight(1f))
                 }
-                Spacer(Modifier.height(8.dp))
-                FilterDropdown("📌 Category", categoryOptions, filterCategory, { filterCategory = it }, Modifier.fillMaxWidth())
             }
 
             Spacer(Modifier.height(8.dp))
