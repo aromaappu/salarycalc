@@ -80,7 +80,11 @@ fun FeatureListItem(
         ) {
             Text(icon, fontSize = 18.sp)
         }
-        Column(Modifier.weight(1f)) {
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(horizontal = 10.dp)
+        ) {
             Text(
                 text = title,
                 fontSize = 15.sp,
